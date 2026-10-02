@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import axios from 'axios';
@@ -30,7 +30,7 @@ function Whiteboard() {
   const [saveStatus, setSaveStatus] = useState('idle');
 
   useEffect(() => {
-    if (!id) {
+    if (!id || id === 'new') {
       return;
     }
 
@@ -43,7 +43,7 @@ function Whiteboard() {
           return;
         }
 
-        setTitle(response.data.title);
+        setTitle(response.data.title || 'Untitled Board');
         if (excalidrawAPI) {
           excalidrawAPI.updateScene({
             elements: response.data.elements || [],
@@ -67,7 +67,7 @@ function Whiteboard() {
     setSaveStatus('saving');
 
     try {
-      if (id) {
+      if (id && id !== 'new') {
         await axios.put(`${API_URL}/${id}`, { title, elements });
       } else {
         const response = await axios.post(API_URL, {
@@ -75,7 +75,7 @@ function Whiteboard() {
           elements,
           isPublic: true,
         });
-        navigate(`/${response.data._id}`, { replace: true });
+        navigate(`/board/${response.data._id}`, { replace: true });
       }
 
       setSaveStatus('saved');
@@ -99,17 +99,43 @@ function Whiteboard() {
   return (
     <div className="whiteboard">
       <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            GFG
-          </span>
-          <input
-            className="board-title-input"
-            type="text"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            aria-label="Board title"
-          />
+        <div className="header-left">
+          <Link
+            to="/"
+            className="back-to-dashboard-btn"
+            title="Back to Dashboard"
+            aria-label="Back to Dashboard"
+          >
+            <svg
+              className="back-icon"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="19" y1="12" x2="5" y2="12" />
+              <polyline points="12 19 5 12 12 5" />
+            </svg>
+            <span>Dashboard</span>
+          </Link>
+          <span className="header-divider" aria-hidden="true" />
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true">
+              GFG
+            </span>
+            <input
+              className="board-title-input"
+              type="text"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              aria-label="Board title"
+            />
+          </div>
         </div>
         <button
           className={`save-board-btn${saveStatus === 'saved' ? ' is-saved' : ''}`}
