@@ -1,0 +1,132 @@
+.whiteboard {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: #070a08;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  height: 60px;
+  padding: 0 20px;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #121a14 0%, #0b100c 100%);
+  border-bottom: 1px solid rgba(47, 143, 70, 0.35);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #2f8f46;
+  color: #07140b;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.board-title-input {
+  appearance: none;
+  min-width: 140px;
+  max-width: min(52vw, 420px);
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #e8f3ea;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  outline: none;
+}
+
+.board-title-input:hover {
+  background: rgba(232, 243, 234, 0.04);
+}
+
+.board-title-input:focus {
+  background: rgba(232, 243, 234, 0.06);
+  border-color: rgba(47, 143, 70, 0.55);
+}
+
+.canvas-stage {
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 60px);
+  position: relative;
+}
+
+.save-board-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #3bb85c 0%, #2f8f46 100%);
+  color: #07140b;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.25) inset,
+    0 8px 18px rgba(47, 143, 70, 0.28);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
+}
+
+.save-board-btn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.28) inset,
+    0 10px 22px rgba(47, 143, 70, 0.38);
+}
+
+.save-board-btn:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+
+.save-board-btn:focus-visible {
+  outline: 2px solid #8ee0a3;
+  outline-offset: 2px;
+}
+
+.save-board-btn:disabled {
+  cursor: wait;
+  transform: none;
+  filter: none;
+  opacity: 0.85;
+}
+
+.save-board-btn.is-saved {
+  background: linear-gradient(180deg, #6ee59a 0%, #3bb85c 100%);
+}
