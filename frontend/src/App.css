@@ -184,6 +184,109 @@
   background: linear-gradient(180deg, #6ee59a 0%, #3bb85c 100%);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.board-title-static {
+  margin: 0;
+  padding: 6px 8px;
+  color: #e8f3ea;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  max-width: min(52vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-link-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid rgba(47, 143, 70, 0.4);
+  border-radius: 999px;
+  background: rgba(47, 143, 70, 0.12);
+  color: #d8f5df;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.share-link-btn:hover {
+  background: rgba(47, 143, 70, 0.24);
+  border-color: rgba(59, 184, 92, 0.65);
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(47, 143, 70, 0.25);
+}
+
+.share-link-btn:active {
+  transform: translateY(0);
+}
+
+.share-link-btn.is-copied {
+  background: rgba(47, 143, 70, 0.35);
+  border-color: #3bb85c;
+  color: #a4f5c0;
+  box-shadow: 0 0 16px rgba(47, 143, 70, 0.4);
+}
+
+.btn-icon {
+  flex-shrink: 0;
+}
+
+.student-view-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(47, 143, 70, 0.12);
+  border: 1px solid rgba(47, 143, 70, 0.4);
+  color: #4cd471;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3bb85c;
+  box-shadow: 0 0 8px #3bb85c;
+  animation: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}
+
+
 /* ==========================================================================
    Dashboard Styles
    ========================================================================== */
@@ -745,6 +848,10 @@
     max-width: 180px;
   }
 
+  .board-title-static {
+    max-width: 180px;
+  }
+
   .back-to-dashboard-btn span {
     display: none;
   }
@@ -752,4 +859,23 @@
   .back-to-dashboard-btn {
     padding: 6px 8px;
   }
+
+  .share-link-btn {
+    padding: 0 10px;
+  }
+
+  .share-link-btn span {
+    display: none;
+  }
+
+  .share-link-btn.is-copied span {
+    display: inline;
+  }
+
+  .student-view-badge {
+    padding: 0 10px;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
 }
+

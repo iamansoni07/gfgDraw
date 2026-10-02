@@ -10,6 +10,7 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/board/new" element={<Whiteboard />} />
         <Route path="/board/:id" element={<Whiteboard />} />
+        <Route path="/view/:id" element={<Whiteboard readOnly={true} />} />
       </Routes>
     </BrowserRouter>
   );
