@@ -4,42 +4,46 @@ import axios from 'axios';
 
 const API_URL = 'http://localhost:5000/api/boards';
 
-function formatRelativeTime(dateString) {
-  if (!dateString) return 'Edited recently';
+function formatFriendlyDate(dateString) {
+  if (!dateString) return 'Updated recently';
   const date = new Date(dateString);
-  if (isNaN(date.getTime())) return 'Edited recently';
+  if (isNaN(date.getTime())) return 'Updated recently';
 
   const now = new Date();
-  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+  const diffInMs = now.getTime() - date.getTime();
+  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
 
-  if (diffInSeconds < 60) return 'Edited just now';
-  const diffInMinutes = Math.floor(diffInSeconds / 60);
-  if (diffInMinutes < 60) return `Edited ${diffInMinutes}m ago`;
-  const diffInHours = Math.floor(diffInMinutes / 60);
-  if (diffInHours < 24) return `Edited ${diffInHours}h ago`;
-  const diffInDays = Math.floor(diffInHours / 24);
-  if (diffInDays < 7) return `Edited ${diffInDays}d ago`;
+  if (diffInDays === 0 && date.getDate() === now.getDate()) {
+    return 'Updated today';
+  }
+  if (diffInDays <= 1 && date.getDate() === now.getDate() - 1) {
+    return 'Updated yesterday';
+  }
+  if (diffInDays < 7) {
+    return `Updated ${diffInDays}d ago`;
+  }
 
-  return `Edited on ${date.toLocaleDateString('en-US', {
+  return `Updated ${date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   })}`;
 }
 
-function Dashboard() {
+function Dashboard({ theme = 'light', onToggleTheme }) {
   const navigate = useNavigate();
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent');
-  const [activeMenuId, setActiveMenuId] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
   const [boardToDelete, setBoardToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [toast, setToast] = useState(null);
 
   const toastTimeoutRef = useRef(null);
+  const copyTimeoutRef = useRef(null);
 
   const showToast = (message, type = 'success') => {
     if (toastTimeoutRef.current) {
@@ -77,28 +81,18 @@ function Dashboard() {
     };
   }, []);
 
-  // Close card action menus on external click or ESC key
+  // Handle ESC key for modal
   useEffect(() => {
-    const handleDocumentClick = (e) => {
-      if (!e.target.closest('.card-actions-wrapper')) {
-        setActiveMenuId(null);
-      }
-    };
-
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        setActiveMenuId(null);
         if (!isDeleting) {
           setBoardToDelete(null);
         }
       }
     };
 
-    document.addEventListener('click', handleDocumentClick);
     document.addEventListener('keydown', handleKeyDown);
-
     return () => {
-      document.removeEventListener('click', handleDocumentClick);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isDeleting]);
@@ -122,7 +116,6 @@ function Dashboard() {
 
   const handleCopyShareLink = async (e, boardId) => {
     e.stopPropagation();
-    setActiveMenuId(null);
     const shareUrl = `${window.location.origin}/view/${boardId}`;
 
     try {
@@ -136,6 +129,11 @@ function Dashboard() {
         document.execCommand('copy');
         document.body.removeChild(textarea);
       }
+
+      setCopiedId(boardId);
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = setTimeout(() => setCopiedId(null), 2000);
+
       showToast('Student view link copied to clipboard!');
     } catch (err) {
       console.error('Failed to copy link:', err);
@@ -145,7 +143,6 @@ function Dashboard() {
 
   const promptDeleteBoard = (e, board) => {
     e.stopPropagation();
-    setActiveMenuId(null);
     setBoardToDelete(board);
   };
 
@@ -156,7 +153,7 @@ function Dashboard() {
     try {
       await axios.delete(`${API_URL}/${boardToDelete._id}`);
       setBoards((prev) => prev.filter((b) => b._id !== boardToDelete._id));
-      showToast('Board removed successfully');
+      showToast('Board deleted successfully');
       setBoardToDelete(null);
     } catch (err) {
       console.error('Failed to delete board:', err);
@@ -180,12 +177,10 @@ function Dashboard() {
       if (sortBy === 'oldest') {
         return new Date(a.updatedAt || 0) - new Date(b.updatedAt || 0);
       }
-      // Default: 'recent'
       return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
     });
 
-  const sessionCountText =
-    boards.length === 1 ? '1 session stored' : `${boards.length} sessions stored`;
+  const sessionCountText = `${boards.length} ${boards.length === 1 ? 'session' : 'sessions'}`;
 
   return (
     <div className="dashboard-page">
@@ -231,63 +226,89 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Top Navigation Bar */}
+      {/* Top Header Bar */}
       <header className="dashboard-header">
         <div className="dashboard-header-inner">
           <div className="brand-lockup">
-            <div className="brand-logo-mark" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 20h9" />
-                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-              </svg>
+            <div className="brand-badge">
+              <span className="brand-code-symbol">[ &#123; &#125; ]</span>
+              <span className="brand-title-text">GFG Draw</span>
             </div>
-            <div className="brand-titles">
-              <span className="brand-name">GFG Draw</span>
-              <span className="brand-divider" aria-hidden="true">/</span>
-              <div className="workspace-pill">
-                <span className="status-dot-pulse" aria-hidden="true" />
-                <span>Instructor Workspace</span>
-              </div>
+            <span className="brand-divider" aria-hidden="true">/</span>
+            <div className="workspace-pill">
+              <span className="status-dot-pulse" aria-hidden="true" />
+              <span>Instructor Workspace</span>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => navigate('/board/new')}
-            className="create-board-btn"
-          >
-            <svg
-              className="btn-icon"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+          <div className="header-right-actions">
+            {/* Theme Toggle Button */}
+            <button
+              type="button"
+              className="theme-toggle-btn"
+              onClick={onToggleTheme}
+              aria-label={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+              title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
             >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <span>New Board</span>
-          </button>
+              {theme === 'dark' ? (
+                /* Sun Icon */
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+              ) : (
+                /* Moon Icon */
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+              )}
+            </button>
+
+            {/* Create New Board Button */}
+            <button
+              type="button"
+              onClick={() => navigate('/board/new')}
+              className="create-board-btn"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>+ Create New Board</span>
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Content Area */}
       <main className="dashboard-main">
         <div className="dashboard-container">
-          {/* Header & Controls Toolbar */}
+          {/* Action / Filter Strip */}
           <section className="dashboard-toolbar">
             <div className="toolbar-headline">
               <div className="headline-text-group">
-                <h1 className="toolbar-title">Lecture Boards</h1>
+                <h1 className="toolbar-title">Lecture Whiteboards</h1>
                 <span className="sessions-count-pill">{sessionCountText}</span>
               </div>
               <p className="toolbar-description">
-                Interactive drawings, diagrams, and live lectures created for your students.
+                Interactive drawings, blueprints, and live lecture visual aids for your students.
               </p>
             </div>
 
@@ -311,7 +332,7 @@ function Dashboard() {
                 </svg>
                 <input
                   type="text"
-                  placeholder="Search boards..."
+                  placeholder="Search whiteboards..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="search-field-input"
@@ -341,7 +362,7 @@ function Dashboard() {
                     aria-label="Sort lecture boards"
                   >
                     <option value="recent">Most Recent</option>
-                    <option value="alphabetical">Alphabetical (A-Z)</option>
+                    <option value="alphabetical">Title A-Z</option>
                     <option value="oldest">Oldest First</option>
                   </select>
                   <svg
@@ -381,7 +402,7 @@ function Dashboard() {
 
           {/* Connection Error State */}
           {!loading && error && (
-            <div className="status-banner error-banner">
+            <div className="status-banner">
               <div className="banner-icon-wrap" aria-hidden="true">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <circle cx="12" cy="12" r="10" />
@@ -425,7 +446,6 @@ function Dashboard() {
                 className="create-board-btn"
               >
                 <svg
-                  className="btn-icon"
                   width="16"
                   height="16"
                   viewBox="0 0 24 24"
@@ -439,7 +459,7 @@ function Dashboard() {
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                <span>Create Your First Board</span>
+                <span>Create your first lecture board</span>
               </button>
             </div>
           )}
@@ -453,9 +473,9 @@ function Dashboard() {
                   <line x1="21" y1="21" x2="16.65" y2="16.65" />
                 </svg>
               </div>
-              <h3 className="empty-search-title">No boards found</h3>
+              <h3 className="empty-search-title">No matching boards found</h3>
               <p className="empty-search-desc">
-                No lecture boards match &ldquo;{searchQuery}&rdquo;. Try another keyword or reset the filter.
+                No whiteboards matched &ldquo;{searchQuery}&rdquo;. Try another term or clear the filter.
               </p>
               <button
                 type="button"
@@ -467,12 +487,12 @@ function Dashboard() {
             </div>
           )}
 
-          {/* Redesigned Board Cards Grid */}
+          {/* Board Cards Grid */}
           {!loading && !error && filteredAndSortedBoards.length > 0 && (
             <div className="boards-grid">
               {filteredAndSortedBoards.map((board) => {
-                const isMenuOpen = activeMenuId === board._id;
                 const elementCount = Array.isArray(board.elements) ? board.elements.length : 0;
+                const isCopied = copiedId === board._id;
 
                 return (
                   <div
@@ -489,7 +509,7 @@ function Dashboard() {
                     role="button"
                     aria-label={`Open board: ${board.title || 'Untitled Board'}`}
                   >
-                    {/* Card Thumbnail / Header Area */}
+                    {/* Card Preview Banner */}
                     <div className="board-card-thumbnail">
                       <div className="canvas-grid-art" aria-hidden="true" />
                       <div className="thumbnail-badge-row">
@@ -504,82 +524,46 @@ function Dashboard() {
                         </span>
 
                         <span className="elements-count-badge">
-                          {elementCount} {elementCount === 1 ? 'object' : 'objects'}
+                          {elementCount} {elementCount === 1 ? 'node/shape' : 'nodes/shapes'}
                         </span>
                       </div>
 
-                      {/* Card Action Menu Toggle */}
-                      <div className="card-actions-wrapper">
+                      {/* Quick Action Buttons (Copy & Delete) */}
+                      <div className="card-quick-actions">
                         <button
                           type="button"
-                          className={`card-menu-trigger ${isMenuOpen ? 'is-active' : ''}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveMenuId(isMenuOpen ? null : board._id);
-                          }}
-                          aria-label="More board actions"
-                          title="Board options"
+                          className={`card-action-icon-btn ${isCopied ? 'is-copied' : ''}`}
+                          onClick={(e) => handleCopyShareLink(e, board._id)}
+                          aria-label="Copy Share Link"
+                          title={isCopied ? 'Link Copied!' : 'Copy Share Link'}
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                            <circle cx="12" cy="5" r="2" />
-                            <circle cx="12" cy="12" r="2" />
-                            <circle cx="12" cy="19" r="2" />
-                          </svg>
+                          {isCopied ? (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <circle cx="18" cy="5" r="3" />
+                              <circle cx="6" cy="12" r="3" />
+                              <circle cx="18" cy="19" r="3" />
+                              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                            </svg>
+                          )}
                         </button>
 
-                        {/* Dropdown Menu */}
-                        {isMenuOpen && (
-                          <div
-                            className="card-dropdown-menu"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              className="dropdown-item"
-                              onClick={(e) => handleCopyShareLink(e, board._id)}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <circle cx="18" cy="5" r="3" />
-                                <circle cx="6" cy="12" r="3" />
-                                <circle cx="18" cy="19" r="3" />
-                                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                              </svg>
-                              <span>Copy Share Link</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              className="dropdown-item"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveMenuId(null);
-                                window.open(`/view/${board._id}`, '_blank');
-                              }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                                <polyline points="15 3 21 3 21 9" />
-                                <line x1="10" y1="14" x2="21" y2="3" />
-                              </svg>
-                              <span>Open Student View</span>
-                            </button>
-
-                            <div className="dropdown-divider" />
-
-                            <button
-                              type="button"
-                              className="dropdown-item dropdown-danger"
-                              onClick={(e) => promptDeleteBoard(e, board)}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="3 6 5 6 21 6" />
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                              </svg>
-                              <span>Delete Board</span>
-                            </button>
-                          </div>
-                        )}
+                        <button
+                          type="button"
+                          className="card-action-icon-btn btn-danger"
+                          onClick={(e) => promptDeleteBoard(e, board)}
+                          aria-label="Delete Board"
+                          title="Delete Board"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
 
@@ -590,32 +574,34 @@ function Dashboard() {
                           {board.title?.trim() || 'Untitled Board'}
                         </h3>
                         <div className="board-card-timestamp">
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <circle cx="12" cy="12" r="10" />
                             <polyline points="12 6 12 12 16 14" />
                           </svg>
-                          <span>{formatRelativeTime(board.updatedAt)}</span>
+                          <span>{formatFriendlyDate(board.updatedAt)}</span>
                         </div>
                       </div>
 
-                      {/* Card Footer with Direct Launch CTA */}
+                      {/* Card Footer */}
                       <div className="board-card-footer">
-                        <span className="open-canvas-text">Open Board</span>
-                        <svg
-                          className="open-canvas-arrow"
-                          width="15"
-                          height="15"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                        >
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                          <polyline points="12 5 19 12 12 19" />
-                        </svg>
+                        <span className="open-canvas-link">
+                          <span>Open Canvas</span>
+                          <svg
+                            className="open-canvas-arrow"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <line x1="5" y1="12" x2="19" y2="12" />
+                            <polyline points="12 5 19 12 12 19" />
+                          </svg>
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -657,7 +643,7 @@ function Dashboard() {
                   <strong className="modal-highlight">
                     &ldquo;{boardToDelete.title || 'Untitled Board'}&rdquo;
                   </strong>
-                  ? This action cannot be undone and student links will stop functioning.
+                  ? This action cannot be undone.
                 </p>
               </div>
             </div>
