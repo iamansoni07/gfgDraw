@@ -27,6 +27,12 @@ function Whiteboard({ readOnly = false, theme = 'light', onToggleTheme }) {
   const [copyStatus, setCopyStatus] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
 
+  // Playback state (active when readOnly is true and allElements.length > 0)
+  const [allElements, setAllElements] = useState([]);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+
   // Synchronize canvas background color according to theme
   const canvasDefaults = {
     viewBackgroundColor: theme === 'dark' ? '#12161A' : '#F8F9FA',
@@ -47,10 +53,20 @@ function Whiteboard({ readOnly = false, theme = 'light', onToggleTheme }) {
           return;
         }
 
+        const rawElements = response.data.elements || [];
+        const validElements = rawElements.filter((el) => !el.isDeleted);
+
         setTitle(response.data.title || 'Untitled Board');
+        setAllElements(validElements);
+
+        if (readOnly) {
+          setCurrentStep(validElements.length);
+          setIsPlaying(false);
+        }
+
         if (excalidrawAPI) {
           excalidrawAPI.updateScene({
-            elements: response.data.elements || [],
+            elements: readOnly ? validElements : rawElements,
             appState: {
               viewBackgroundColor: theme === 'dark' ? '#12161A' : '#F8F9FA',
             },
@@ -66,7 +82,90 @@ function Whiteboard({ readOnly = false, theme = 'light', onToggleTheme }) {
     return () => {
       cancelled = true;
     };
-  }, [id, excalidrawAPI, theme]);
+  }, [id, excalidrawAPI, readOnly]);
+
+  // Synchronize canvas background color with theme changes
+  useEffect(() => {
+    if (!excalidrawAPI) {
+      return;
+    }
+    excalidrawAPI.updateScene({
+      appState: {
+        viewBackgroundColor: theme === 'dark' ? '#12161A' : '#F8F9FA',
+      },
+    });
+  }, [theme, excalidrawAPI]);
+
+  // In readOnly mode, slice elements according to currentStep
+  useEffect(() => {
+    if (!readOnly || !excalidrawAPI) {
+      return;
+    }
+    excalidrawAPI.updateScene({
+      elements: allElements.slice(0, currentStep),
+    });
+  }, [currentStep, allElements, readOnly, excalidrawAPI]);
+
+  // Timer interval for playback
+  useEffect(() => {
+    if (!isPlaying || !readOnly || allElements.length === 0) {
+      return;
+    }
+
+    const intervalTime = playbackSpeed === 2 ? 300 : 600;
+    const timer = window.setInterval(() => {
+      setCurrentStep((prevStep) => {
+        const nextStep = prevStep + 1;
+        if (nextStep >= allElements.length) {
+          setIsPlaying(false);
+          return allElements.length;
+        }
+        return nextStep;
+      });
+    }, intervalTime);
+
+    return () => window.clearInterval(timer);
+  }, [isPlaying, readOnly, playbackSpeed, allElements.length]);
+
+  const handleTogglePlay = () => {
+    if (isPlaying) {
+      setIsPlaying(false);
+      return;
+    }
+    if (currentStep >= allElements.length) {
+      setCurrentStep(0);
+    }
+    setIsPlaying(true);
+  };
+
+  const handleStepBack = () => {
+    setIsPlaying(false);
+    setCurrentStep((prev) => Math.max(0, prev - 1));
+  };
+
+  const handleStepForward = () => {
+    setIsPlaying(false);
+    setCurrentStep((prev) => Math.min(allElements.length, prev + 1));
+  };
+
+  const handleReset = () => {
+    setIsPlaying(false);
+    setCurrentStep(0);
+  };
+
+  const handleShowAll = () => {
+    setIsPlaying(false);
+    setCurrentStep(allElements.length);
+  };
+
+  const handleToggleSpeed = () => {
+    setPlaybackSpeed((prev) => (prev === 1 ? 2 : 1));
+  };
+
+  const handleSliderChange = (event) => {
+    setIsPlaying(false);
+    setCurrentStep(Number(event.target.value));
+  };
 
   const saveToServer = useCallback(async () => {
     const elements = excalidrawAPI?.getSceneElements() ?? [];
@@ -313,6 +412,145 @@ function Whiteboard({ readOnly = false, theme = 'light', onToggleTheme }) {
           theme={theme === 'dark' ? 'dark' : 'light'}
           viewModeEnabled={readOnly}
         />
+
+        {readOnly && allElements.length > 0 && (
+          <nav className="playback-dock" aria-label="Sequential stroke playback">
+            <div className="playback-controls-group">
+              <button
+                type="button"
+                className="playback-btn playback-reset-btn"
+                onClick={handleReset}
+                disabled={currentStep === 0}
+                title="Reset (0)"
+                aria-label="Reset to step 0"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polygon points="19 20 9 12 19 4 19 20" />
+                  <line x1="5" y1="19" x2="5" y2="5" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                className="playback-btn playback-step-btn"
+                onClick={handleStepBack}
+                disabled={currentStep === 0}
+                title="Step Back (-1)"
+                aria-label="Step Back"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                className={`playback-btn playback-play-btn${isPlaying ? ' is-playing' : ''}`}
+                onClick={handleTogglePlay}
+                title={isPlaying ? 'Pause' : 'Play'}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="4" width="4" height="16" rx="1" />
+                    <rect x="14" y="4" width="4" height="16" rx="1" />
+                  </svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <polygon points="6 4 20 12 6 20 6 4" />
+                  </svg>
+                )}
+              </button>
+
+              <button
+                type="button"
+                className="playback-btn playback-step-btn"
+                onClick={handleStepForward}
+                disabled={currentStep >= allElements.length}
+                title="Step Forward (+1)"
+                aria-label="Step Forward"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                className="playback-btn playback-show-all-btn"
+                onClick={handleShowAll}
+                disabled={currentStep === allElements.length}
+                title="Show All"
+                aria-label="Show All elements"
+              >
+                Show All
+              </button>
+            </div>
+
+            <span className="playback-divider" aria-hidden="true" />
+
+            <div className="playback-scrubber-group">
+              <input
+                type="range"
+                className="playback-slider"
+                min={0}
+                max={allElements.length}
+                value={currentStep}
+                onChange={handleSliderChange}
+                onMouseDown={() => setIsPlaying(false)}
+                onTouchStart={() => setIsPlaying(false)}
+                aria-label="Replay scrub slider"
+              />
+              <span className="playback-counter-badge">
+                Step {currentStep} / {allElements.length}
+              </span>
+            </div>
+
+            <span className="playback-divider" aria-hidden="true" />
+
+            <div className="playback-speed-group">
+              <button
+                type="button"
+                className="playback-btn playback-speed-btn"
+                onClick={handleToggleSpeed}
+                title={`Playback speed: ${playbackSpeed}x (click to toggle)`}
+                aria-label={`Playback speed ${playbackSpeed}x`}
+              >
+                {playbackSpeed}x
+              </button>
+            </div>
+          </nav>
+        )}
 
         {!readOnly && (
           <div className="dsa-templates-root">

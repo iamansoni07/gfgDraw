@@ -12,7 +12,7 @@ This file is the single reference for AI coding agents working in this repositor
 
 **Product intent:** Instructors create and save Excalidraw scenes to MongoDB, browse them on a dashboard, and share a read-only student URL. Students can view the board; they cannot edit or save.
 
-**Current phase:** Core persistence, instructor dashboard, student view, and a GFG light/dark theme are in place. DSA stencil helpers and lecture-playback features are not.
+**Current phase:** Core persistence, instructor dashboard, student view, GFG light/dark theme, DSA templates (Phase 2), and Sequential Stroke Playback (Phase 3) are in place.
 
 ---
 
@@ -48,14 +48,15 @@ gfgDraw/
         ├── App.jsx          # Router + theme (data-theme / localStorage)
         ├── App.css          # GFG design tokens + dashboard + whiteboard UI
         ├── index.css        # Global reset (still has leftover dark-page defaults)
-        └── components/
-            ├── Dashboard.jsx
-            └── Whiteboard.jsx
+        ├── components/
+        │   ├── Dashboard.jsx
+        │   └── Whiteboard.jsx
+        └── utils/
+            └── dsaTemplates.js # Binary Tree, Array, Linked List stencils
 ```
 
 **Not present (do not import until created):**
 
-- `frontend/src/utils/` (including `dsaTemplates.js`)
 - Root workspace scripts / monorepo tooling
 - Auth, users, or board-ownership models
 
@@ -250,6 +251,8 @@ Do not commit unless the human asks. Current `main` can be **ahead of `origin/ma
 - `Whiteboard.jsx`: Excalidraw embed, title edit, create-vs-update save, `viewModeEnabled`, share-link copy, theme-aware canvas
 - `Dashboard.jsx`: list, search, sort, share copy, delete modal + `DELETE` API
 - GFG `data-theme` + `localStorage` (`gfg_theme`) in `App.jsx` / `App.css`
+- **DSA Templates (Phase 2):** `frontend/src/utils/dsaTemplates.js` (Binary Tree, Array, Singly Linked List) + canvas drawer in `Whiteboard.jsx`
+- **Sequential Stroke Playback (Phase 3):** Floating replay dock on student view (`readOnly={true}`), Step Back/Forward, Play/Pause with auto-restart, Reset (0), Show All, speed toggle (1x/2x), range scrubbing, and live step counter badge
 
 **Git (at audit time)**
 
@@ -272,23 +275,18 @@ Do not commit unless the human asks. Current `main` can be **ahead of `origin/ma
 | Excalidraw `files` / full `appState` | Not persisted |
 | API URL | Hardcoded localhost |
 | Auth | None |
-| `frontend/src/utils/dsaTemplates.js` | **Missing** |
+| DSA Templates (`dsaTemplates.js`) | **Implemented** (Phase 2) |
+| Sequential Stroke Playback | **Implemented** (Phase 3) |
 
-No broken imports found among existing components (`Dashboard` and `Whiteboard` resolve from `App.jsx`). `dsaTemplates` is simply absent.
+### Phase 2 (Completed)
 
-### Next up — Phase 2
+- **DSA Templates drawer** — implemented with `frontend/src/utils/dsaTemplates.js` (Binary Tree, Array, and Linked List generators) and instructor drawer UI in `Whiteboard.jsx`.
 
-Highest-value missing product feature:
+### Phase 3
 
-1. **DSA Templates drawer** — add `frontend/src/utils/dsaTemplates.js` with Binary Tree, Array, and Linked List helpers, plus a Whiteboard UI to insert generated Excalidraw elements via `excalidrawAPI.updateScene` / `addFiles` as needed.
-2. **Commit the theme working tree** (after human approval) so Light/Dark is not lost.
-3. Optional polish: align `index.css` with `--bg-app`, allow dashboard scroll, env-based API URL, PUT `isPublic` if sharing policy needs it.
-
-### Phase 3 (not started)
-
-- **Focus Mode** — hide instructor chrome during live lecture
-- **Stroke Playback** — replay element creation order for walkthroughs
-- **Code Blocks** — first-class code/snippet objects on the canvas (beyond raw Excalidraw text)
+- **Stroke Playback** — **Implemented** for student read-only view (`readOnly={true}` in `Whiteboard.jsx`), featuring sequential stroke slice updates, play/pause interval timer, 1x/2x speed toggle, scrubber slider, step back/forward/reset, and step badge.
+- **Focus Mode** (not started) — hide instructor chrome during live lecture
+- **Code Blocks** (not started) — first-class code/snippet objects on the canvas (beyond raw Excalidraw text)
 
 ---
 
