@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import axios from 'axios';
+import { DSA_TEMPLATES } from '../utils/dsaTemplates';
 
 const API_URL = 'http://localhost:5000/api/boards';
 
@@ -24,6 +25,7 @@ function Whiteboard({ readOnly = false, theme = 'light', onToggleTheme }) {
   const [excalidrawAPI, setExcalidrawAPI] = useState(null);
   const [saveStatus, setSaveStatus] = useState('idle');
   const [copyStatus, setCopyStatus] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   // Synchronize canvas background color according to theme
   const canvasDefaults = {
@@ -90,6 +92,36 @@ function Whiteboard({ readOnly = false, theme = 'light', onToggleTheme }) {
       window.setTimeout(() => setSaveStatus('idle'), 2000);
     }
   }, [excalidrawAPI, id, navigate, title]);
+
+  const getViewportCenter = useCallback(() => {
+    const appState = excalidrawAPI?.getAppState?.();
+    if (!appState) {
+      return { centerX: 0, centerY: 0 };
+    }
+
+    const zoom = appState.zoom?.value ?? 1;
+    const width = appState.width ?? 0;
+    const height = appState.height ?? 0;
+    const centerX = width / (2 * zoom) - (appState.scrollX ?? 0);
+    const centerY = height / (2 * zoom) - (appState.scrollY ?? 0);
+    return { centerX, centerY };
+  }, [excalidrawAPI]);
+
+  const insertTemplate = useCallback(
+    (generator) => {
+      if (!excalidrawAPI || readOnly) {
+        return;
+      }
+
+      const { centerX, centerY } = getViewportCenter();
+      const created = generator(centerX, centerY);
+      const existing = excalidrawAPI.getSceneElements() ?? [];
+      excalidrawAPI.updateScene({
+        elements: [...existing, ...created],
+      });
+    },
+    [excalidrawAPI, getViewportCenter, readOnly],
+  );
 
   const handleShareLink = async () => {
     const shareUrl = `${window.location.origin}/view/${id}`;
@@ -281,6 +313,66 @@ function Whiteboard({ readOnly = false, theme = 'light', onToggleTheme }) {
           theme={theme === 'dark' ? 'dark' : 'light'}
           viewModeEnabled={readOnly}
         />
+
+        {!readOnly && (
+          <div className="dsa-templates-root">
+            <button
+              type="button"
+              className={`dsa-templates-toggle${templatesOpen ? ' is-open' : ''}`}
+              onClick={() => setTemplatesOpen((open) => !open)}
+              aria-expanded={templatesOpen}
+              aria-controls="dsa-templates-drawer"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+              <span>DSA Templates</span>
+            </button>
+
+            {templatesOpen && (
+              <aside
+                id="dsa-templates-drawer"
+                className="dsa-templates-drawer"
+                aria-label="DSA templates"
+              >
+                <p className="dsa-templates-hint">
+                  Insert a starter diagram at the center of the current view.
+                </p>
+                <ul className="dsa-templates-list">
+                  {DSA_TEMPLATES.map((template) => (
+                    <li key={template.id} className="dsa-template-item">
+                      <div className="dsa-template-copy">
+                        <span className="dsa-template-category">{template.category}</span>
+                        <h3 className="dsa-template-name">{template.name}</h3>
+                        <p className="dsa-template-desc">{template.description}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="dsa-template-insert-btn"
+                        onClick={() => insertTemplate(template.generator)}
+                      >
+                        Insert
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
