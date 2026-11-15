@@ -253,6 +253,21 @@ Do not commit unless the human asks. Current `main` can be **ahead of `origin/ma
 - GFG `data-theme` + `localStorage` (`gfg_theme`) in `App.jsx` / `App.css`
 - **DSA Templates (Phase 2):** `frontend/src/utils/dsaTemplates.js` (Binary Tree, Array, Singly Linked List) + canvas drawer in `Whiteboard.jsx`
 - **Sequential Stroke Playback (Phase 3):** Floating replay dock on student view (`readOnly={true}`), Step Back/Forward, Play/Pause with auto-restart, Reset (0), Show All, speed toggle (1x/2x), range scrubbing, and live step counter badge
+- **Architectural Drafting Studio & Native Path2D Engine (Phase 4):**
+  - **Zero Third-Party Drawing Libraries:** `roughjs` and `perfect-freehand` completely eliminated; replaced with a 100% custom native HTML5 Canvas 2D / `Path2D` rendering pipeline (`frontend/src/engine/renderer.ts`).
+  - **Three Native Architectural Rendering Styles:**
+    1. `"precision"` (Default): Geometric vector strokes, anti-aliased paths, subtle directional elevation shadow, and sharp typography.
+    2. `"blueprint"`: Technical drafting style with primary border stroke, 3.5px inner hairline offset, and corner registration cross-ticks (`+`).
+    3. `"ink"`: Custom velocity-weighted Catmull-Rom / quadratic Bezier ribbon with dynamic stroke tapering derived purely from native canvas math.
+  - **Edge-to-Edge Studio Framing (No Floating Pill Docks):**
+    - **Header (`frontend/src/components/StudioHeader.tsx`):** 44px full-width docked top bar with custom geometric GFG Draw SVG emblem, editable title, `⌘K` Quick Actions button, collaborator avatars, Follow Spotlight, Editor/Viewer role badge, Share modal, and JSON Canvas / PNG / SVG export.
+    - **Left Docked Tool Strip (`frontend/src/components/Toolbar.tsx`):** 48px vertical rail with 1px right hairline border and emerald active indicator bar.
+    - **Live Viewport Rulers (`frontend/src/components/RulerOverlay.tsx`):** 20px top (from x=68px) and left (from y=64px) canvas rulers with zoom-adaptive tick intervals and live cursor position indicators.
+    - **Contextual Selection Micro-Bar (`frontend/src/components/SelectionInspector.tsx`):** Sharp 6px corners floating 10px above selection center with swatches, stroke widths (1px, 2px, 4px), style switcher (`Precision` / `Blueprint` / `Ink`), empty/fill/hatch toggles, duplicate, and delete.
+    - **Bottom Telemetry & Multi-Page Footer (`frontend/src/components/BottomTelemetryBar.tsx`):** 30px docked footer with multi-page tabs (emerald top indicator on active tab) and live monospace telemetry readout (`(X, Y)`, `W × H`, grid toggle, theme toggle, zoom controls `-`, `100%`, `+`, `Fit`).
+    - **Brand Color Palette:**
+      - Light ("Studio Paper"): `#F7F7F5` canvas, `#FFFFFF` chrome, `#E4E4E7` hairline borders, `#111827` primary ink, `#059669` vibrant emerald accent.
+      - Dark ("Carbon Studio"): `#0B0E14` canvas, `#11151D` chrome, `#1F2633` hairline borders, `#F3F4F6` primary ink, `#10B981` luminous emerald accent.
 
 **Git (at audit time)**
 

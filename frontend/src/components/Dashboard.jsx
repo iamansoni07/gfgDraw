@@ -271,6 +271,21 @@ function Dashboard({ theme = 'light', onToggleTheme }) {
               )}
             </button>
 
+            {/* Open Infinite Canvas Button */}
+            <button
+              type="button"
+              onClick={() => navigate('/canvas')}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold text-[#2F9E44] bg-[#2F9E44]/10 hover:bg-[#2F9E44]/20 border border-[#2F9E44]/30 transition-all flex items-center gap-1.5 shadow-sm"
+              title="Launch Infinite Whiteboard (JSON Canvas 1.0 + Realtime Multiplayer)"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                <polyline points="2 17 12 22 22 17" />
+                <polyline points="2 12 12 17 22 12" />
+              </svg>
+              <span>Infinite Canvas</span>
+            </button>
+
             {/* Create New Board Button */}
             <button
               type="button"
