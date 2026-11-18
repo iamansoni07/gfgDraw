@@ -1,0 +1,40 @@
+{
+  "name": "gfg-draw",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GFG Draw — Precision Drafting Studio and High-Performance Infinite Whiteboard",
+  "workspaces": [
+    "frontend",
+    "server",
+    "mcp-server",
+    "packages/canvas-sdk"
+  ],
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build && npm --prefix server run build && npm --prefix packages/canvas-sdk run build",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:server": "npm --prefix server run build",
+    "build:mcp": "npm --prefix mcp-server run build",
+    "build:sdk": "npm --prefix packages/canvas-sdk run build",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "server": "npm --prefix server run dev"
+  },
+  "keywords": [
+    "whiteboard",
+    "diagramming",
+    "system-design",
+    "dsa",
+    "canvas",
+    "yjs",
+    "mcp",
+    "pwa"
+  ],
+  "author": "GFG Draw Contributors",
+  "license": "MIT",
+  "devDependencies": {
+    "vitest": "^5.1.1"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "gfg-draw-mcp-server",
+  "version": "1.0.0",
+  "description": "Model Context Protocol (MCP) server for live bidirectional agent interaction with GFG Draw infinite whiteboard",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "y-websocket": "^3.1.0",
+    "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

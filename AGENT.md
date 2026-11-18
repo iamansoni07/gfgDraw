@@ -269,6 +269,27 @@ Do not commit unless the human asks. Current `main` can be **ahead of `origin/ma
       - Light ("Studio Paper"): `#F7F7F5` canvas, `#FFFFFF` chrome, `#E4E4E7` hairline borders, `#111827` primary ink, `#059669` vibrant emerald accent.
       - Dark ("Carbon Studio"): `#0B0E14` canvas, `#11151D` chrome, `#1F2633` hairline borders, `#F3F4F6` primary ink, `#10B981` luminous emerald accent.
 
+- **Phase 2 Architectural Studio Advanced Engine (Completed):**
+  - **1. Smart Orthogonal (Elbow) Connectors & Obstacle Routing (`frontend/src/engine/connectorRouter.ts`):**
+    - Three routing modes: `"straight" | "curved" | "elbow"`, switchable from `SelectionInspector`.
+    - Orthogonal 90-degree routing with 24px anchor exit/entry stubs.
+    - Automatic obstacle avoidance querying `RBush` along candidate segments, routing around padded obstacle perimeters, and simplifying collinear waypoints.
+    - Middle segment interactive drag handle to adjust elbow segment offset.
+    - Selectable endpoint markers: `arrow`, `diamond`, `circle`, `none` for both `fromEnd` and `toEnd`.
+  - **2. Magnetic Snapping & Distance Telemetry (`frontend/src/engine/snapping.ts`):**
+    - 6px magnetic alignment snapping to visible nodes in `RBush` across left, center-X, right, top, center-Y, and bottom edges.
+    - Crisp 1px dashed Emerald (`#10B981`) alignment hairlines with `×` intersection crosshairs.
+    - Alt/Option key distance measurement with CAD-style dimension lines and exact pixel gap (`px`) badges.
+  - **3. Frames (`F`) & Slide Presentation Mode (`frontend/src/components/PresentationOverlay.tsx` & `frontend/src/engine/pdfExport.ts`):**
+    - Frame tool (`F`) with header title tag and automatic parent-child translation of enclosed nodes/connectors when dragged.
+    - Distraction-free full-screen presentation mode (`Cmd/Ctrl + Enter` or Header "Present" button).
+    - Orders frames by index/spatial position with smooth 350ms `lerp` camera transitions and Follow Presenter live sync.
+    - 100% self-contained native PDF 1.4 multi-page slide export ("Export Frames as PDF") without external libraries.
+  - **4. Functional `⌘K` Command Palette & Shortcuts (`frontend/src/components/CommandPalette.tsx`):**
+    - Fast keyboard-navigable command modal with fuzzy filtering across Tools, Styles, View/Stage, Arrange/Selection, and Export.
+    - Alignment (left, center, right, top, middle, bottom) and distribution (horizontal, vertical).
+    - Clipboard Copy/Paste (`Cmd/Ctrl+C` & `Cmd/Ctrl+V`) cloning nodes and internal edges with `+24px` offset and fresh IDs committed to Yjs.
+
 **Git (at audit time)**
 
 - Branch: `main`, **ahead of origin by 1 commit**

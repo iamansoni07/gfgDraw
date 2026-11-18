@@ -1,0 +1,41 @@
+{
+  "name": "@gfg-draw/canvas-sdk",
+  "version": "1.0.0",
+  "description": "Standalone MIT React Infinite Whiteboard & Precision Drafting SDK",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build --config vite.config.lib.ts && tsc -p tsconfig.json --emitDeclarationOnly && node -e \"import('fs').then(fs => fs.writeFileSync('dist/index.d.ts', 'export * from \\\"./packages/canvas-sdk/src/index\\\";\\n'))\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "dependencies": {
+    "lucide-react": "^1.73.0",
+    "rbush": "^4.0.1",
+    "y-indexeddb": "^9.0.12",
+    "y-websocket": "^3.1.0",
+    "yjs": "^13.6.33"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}

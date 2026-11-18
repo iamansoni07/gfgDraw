@@ -1,0 +1,19 @@
+{
+  "name": "GFG Draw — Precision Drafting Studio",
+  "short_name": "GFG Draw",
+  "description": "High-performance infinite architectural whiteboard and drafting studio with Yjs multiplayer and native Path2D rendering.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0B0E14",
+  "theme_color": "#11151D",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "categories": ["productivity", "developer tools", "design", "utilities"]
+}
+

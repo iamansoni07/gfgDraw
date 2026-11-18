@@ -12,8 +12,37 @@ import {
 } from '../types/canvas';
 import { generateHexId } from '../engine/camera';
 
-// Public WebSocket demo server for zero-config live multiplayer rooms
-const WS_SERVER = 'wss://demos.yjs.dev/ws';
+// Dynamic WebSocket resolution:
+// In production without VITE_WS_URL, we run in pure Local-First mode (zero localhost connection errors).
+export function resolveWsServerUrl(): string | null {
+  const env = (import.meta as any)?.env;
+  if (!env) return null;
+
+  if (env.VITE_WS_URL) {
+    return env.VITE_WS_URL;
+  }
+
+  if (env.VITE_SERVER_URL) {
+    try {
+      const serverUrl = new URL(env.VITE_SERVER_URL);
+      const protocol = serverUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${serverUrl.host}${serverUrl.pathname.replace(/\/$/, '')}/ws`;
+    } catch {
+      return env.VITE_SERVER_URL.replace(/^http/i, 'ws');
+    }
+  }
+
+  // In production without explicit VITE_WS_URL, do not connect to remote or localhost WebSocket.
+  if (env.PROD) {
+    return null;
+  }
+
+  return null;
+}
+
+export function isLocalFirstMode(): boolean {
+  return resolveWsServerUrl() === null;
+}
 
 export interface YjsStoreOptions {
   roomId: string;
@@ -28,6 +57,10 @@ export class YjsStore {
   public wsProvider: WebsocketProvider | null = null;
   public undoManager: Y.UndoManager | null = null;
 
+  public isLocalFirst: boolean = false;
+  private broadcastChannel: BroadcastChannel | null = null;
+  private localTabUsers: Map<string, UserAwareness> = new Map();
+
   public roomId: string;
   public role: 'edit' | 'view';
   public userId: string;
@@ -36,6 +69,8 @@ export class YjsStore {
 
   // Root Y.Map for pages
   private pagesMap: Y.Map<any>;
+
+  private version: number = 0;
 
   private listeners: Set<() => void> = new Set();
   private awarenessListeners: Set<(users: UserAwareness[]) => void> = new Set();
@@ -54,7 +89,10 @@ export class YjsStore {
     this.doc = new Y.Doc();
     this.pagesMap = this.doc.getMap('pages');
 
-    // Setup Local Persistence
+    const wsUrl = resolveWsServerUrl();
+    this.isLocalFirst = wsUrl === null;
+
+    // Setup Local Persistence via IndexedDB
     if (typeof window !== 'undefined') {
       try {
         this.indexeddbProvider = new IndexeddbPersistence(
@@ -65,27 +103,92 @@ export class YjsStore {
         console.warn('IndexedDB not supported or disabled', err);
       }
 
-      // Setup Live Multiplayer WebSocket & Awareness
-      try {
-        this.wsProvider = new WebsocketProvider(
-          WS_SERVER,
-          `gfg-whiteboard-${this.roomId}`,
-          this.doc
-        );
+      // Setup same-device multi-tab synchronization via BroadcastChannel
+      if (typeof window.BroadcastChannel !== 'undefined') {
+        try {
+          this.broadcastChannel = new BroadcastChannel(`gfg-sync-${this.roomId}`);
+          this.broadcastChannel.onmessage = (event) => {
+            const data = event.data;
+            if (!data) return;
 
-        this.setupAwareness();
-      } catch (err) {
-        console.warn('WebSocket provider connection failed', err);
+            if (data.type === 'doc-update' && data.senderId !== this.userId && data.update) {
+              try {
+                Y.applyUpdate(this.doc, new Uint8Array(data.update), 'broadcast-channel');
+              } catch (err) {
+                console.warn('Failed to apply BroadcastChannel doc update', err);
+              }
+            } else if (data.type === 'awareness' && data.senderId !== this.userId && data.user) {
+              this.handleLocalTabAwareness(data.user);
+            } else if (data.type === 'awareness-leave' && data.senderId !== this.userId) {
+              this.localTabUsers.delete(data.senderId);
+              this.notifyAwareness();
+            }
+          };
+        } catch (err) {
+          console.warn('BroadcastChannel initialization failed', err);
+        }
+      }
+
+      // Setup Live Multiplayer WebSocket & Awareness (if remote server configured)
+      if (wsUrl) {
+        try {
+          this.wsProvider = new WebsocketProvider(
+            wsUrl,
+            `gfg-whiteboard-${this.roomId}`,
+            this.doc
+          );
+
+          this.setupAwareness();
+        } catch (err) {
+          console.warn('WebSocket provider connection failed', err);
+        }
       }
     }
 
     // Subscribe to root doc updates
-    this.doc.on('update', () => {
+    this.doc.on('update', (update: Uint8Array, origin: any) => {
+      this.version++;
       this.notify();
+
+      // Relay to other local tabs via BroadcastChannel if not originating from it
+      if (origin !== 'broadcast-channel' && this.broadcastChannel) {
+        try {
+          this.broadcastChannel.postMessage({
+            type: 'doc-update',
+            senderId: this.userId,
+            update: Array.from(update),
+          });
+        } catch {
+          // ignore
+        }
+      }
     });
 
     // Ensure at least one initial page exists once persistence syncs or on first load
     this.ensureDefaultPage();
+  }
+
+  public getVersion(): number {
+    return this.version;
+  }
+
+  private handleLocalTabAwareness(user: UserAwareness): void {
+    if (!user || user.id === this.userId) return;
+    this.localTabUsers.set(user.id, user);
+    this.notifyAwareness();
+  }
+
+  private notifyAwareness(): void {
+    const now = Date.now();
+    for (const [id, u] of this.localTabUsers.entries()) {
+      if (now - (u.lastActive || 0) > 30000) {
+        this.localTabUsers.delete(id);
+      }
+    }
+    const users = Array.from(this.localTabUsers.values());
+    for (const listener of this.awarenessListeners) {
+      listener(users);
+    }
   }
 
   private setupAwareness(): void {
@@ -123,8 +226,7 @@ export class YjsStore {
     camera?: Camera,
     isPresenter?: boolean
   ): void {
-    if (!this.wsProvider) return;
-    this.wsProvider.awareness.setLocalStateField('user', {
+    const userData: UserAwareness = {
       id: this.userId,
       name: this.userName,
       color: this.userColor,
@@ -133,7 +235,23 @@ export class YjsStore {
       viewport: camera,
       isPresenter: !!isPresenter,
       lastActive: Date.now(),
-    });
+    };
+
+    if (this.wsProvider) {
+      this.wsProvider.awareness.setLocalStateField('user', userData);
+    }
+
+    if (this.broadcastChannel) {
+      try {
+        this.broadcastChannel.postMessage({
+          type: 'awareness',
+          senderId: this.userId,
+          user: userData,
+        });
+      } catch {
+        // ignore
+      }
+    }
   }
 
   public ensureDefaultPage(): string {
@@ -236,6 +354,32 @@ export class YjsStore {
     const edgesYMap = pageYMap.get('edges');
     if (!edgesYMap) return {};
     return edgesYMap.toJSON();
+  }
+
+  public getPageDocText(pageId: string): Y.Text {
+    const pageYMap = this.pagesMap.get(pageId);
+    if (!pageYMap) {
+      return this.doc.getText(`doc-${pageId}`);
+    }
+    let docText = pageYMap.get('doc');
+    if (!docText) {
+      docText = new Y.Text();
+      pageYMap.set('doc', docText);
+    }
+    return docText;
+  }
+
+  public getDocString(pageId: string): string {
+    return this.getPageDocText(pageId).toString();
+  }
+
+  public setDocString(pageId: string, text: string): void {
+    if (this.role === 'view') return;
+    const docText = this.getPageDocText(pageId);
+    this.doc.transact(() => {
+      docText.delete(0, docText.length);
+      docText.insert(0, text);
+    });
   }
 
   public setNode(pageId: string, node: CanvasNode): void {
@@ -378,6 +522,19 @@ export class YjsStore {
   }
 
   public destroy(): void {
+    if (this.broadcastChannel) {
+      try {
+        this.broadcastChannel.postMessage({
+          type: 'awareness-leave',
+          senderId: this.userId,
+        });
+        this.broadcastChannel.close();
+      } catch {
+        // ignore
+      }
+      this.broadcastChannel = null;
+    }
+    this.localTabUsers.clear();
     this.listeners.clear();
     this.awarenessListeners.clear();
     this.indexeddbProvider?.destroy();

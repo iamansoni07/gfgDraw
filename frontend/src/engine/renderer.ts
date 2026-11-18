@@ -8,7 +8,13 @@ import {
   UserAwareness,
   LaserPoint,
   ResizeHandle,
+  SnapGuide,
+  DistanceMeasurement,
+  EndpointMarker,
 } from '../types/canvas';
+import { routeEdge } from './connectorRouter';
+import { SpatialIndex } from './spatialIndex';
+import { PluginRegistry } from '../sdk/pluginApi';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -23,6 +29,11 @@ export interface RenderContext {
   marqueeBox?: BoundingBox | null;
   dpr: number;
   showGrid?: boolean;
+  spatialIndex?: SpatialIndex;
+  snapGuides?: SnapGuide[];
+  distanceMeasurement?: DistanceMeasurement | null;
+  hoveredEdgeId?: string | null;
+  hoveredSegmentIndex?: number | null;
 }
 
 /**
@@ -291,6 +302,52 @@ export function renderNode(
     return;
   }
 
+  // 2. Frame Container Tool Rendering
+  if (shape === 'frame' || node.type === 'frame') {
+    const fx = node.x;
+    const fy = node.y;
+    const fw = node.width;
+    const fh = node.height;
+    const title = node._ext?.frameTitle || node.text || 'Frame';
+
+    ctx.save();
+    // Translucent architectural glass fill
+    ctx.fillStyle = theme === 'dark' ? 'rgba(17, 21, 29, 0.45)' : 'rgba(255, 255, 255, 0.55)';
+    ctx.fillRect(fx, fy, fw, fh);
+
+    // Frame Border
+    ctx.strokeStyle = theme === 'dark' ? '#1F2633' : '#D1D5DB';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(fx, fy, fw, fh);
+    ctx.setLineDash([]);
+
+    // Header Title Tag above top-left corner
+    ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    const tagPadding = 8;
+    const tagMetrics = ctx.measureText(title);
+    const tagW = Math.max(70, tagMetrics.width + tagPadding * 2);
+    const tagH = 20;
+
+    // Tag background
+    ctx.fillStyle = theme === 'dark' ? '#161B22' : '#FFFFFF';
+    ctx.strokeStyle = theme === 'dark' ? '#10B981' : '#059669';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(fx, fy - tagH, tagW, tagH, [4, 4, 0, 0]);
+    ctx.fill();
+    ctx.stroke();
+
+    // Tag text
+    ctx.fillStyle = theme === 'dark' ? '#10B981' : '#059669';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(title, fx + tagPadding, fy - tagH / 2);
+
+    ctx.restore();
+    return;
+  }
+
   // Fill properties
   const fillColor = node._ext?.backgroundColor || 'transparent';
   const hasFill = fillColor !== 'transparent' && fillColor !== 'none';
@@ -478,6 +535,54 @@ export function renderNode(
     }
   }
 
+  // --- DSA SMART KITS ---
+  else if (shape === 'dsa-array') {
+    drawDsaArray(ctx, node, strokeColor, strokeWidth, fillColor, theme);
+    ctx.restore();
+    return;
+  } else if (shape === 'dsa-linked-list') {
+    drawDsaLinkedList(ctx, node, strokeColor, strokeWidth, fillColor, theme);
+    ctx.restore();
+    return;
+  } else if (shape === 'dsa-binary-tree') {
+    drawDsaBinaryTree(ctx, node, strokeColor, strokeWidth, fillColor, theme);
+    ctx.restore();
+    return;
+  } else if (shape === 'dsa-stack') {
+    drawDsaStack(ctx, node, strokeColor, strokeWidth, fillColor, theme);
+    ctx.restore();
+    return;
+  } else if (shape === 'dsa-queue') {
+    drawDsaQueue(ctx, node, strokeColor, strokeWidth, fillColor, theme);
+    ctx.restore();
+    return;
+  }
+  // --- SYSTEM DESIGN SMART KITS ---
+  else if (shape === 'sys-database') {
+    drawSysDatabase(ctx, node, strokeColor, strokeWidth, fillColor, theme);
+    ctx.restore();
+    return;
+  } else if (
+    shape === 'sys-load-balancer' ||
+    shape === 'sys-api-gateway' ||
+    shape === 'sys-microservice' ||
+    shape === 'sys-cache' ||
+    shape === 'sys-queue' ||
+    shape === 'sys-client'
+  ) {
+    drawSysContainer(ctx, node, shape, strokeColor, strokeWidth, fillColor, theme);
+    ctx.restore();
+    return;
+  }
+
+  // --- EXTENSIBLE PLUGIN CUSTOM NODES ---
+  const customPluginNode = PluginRegistry.getCustomNode(shape);
+  if (customPluginNode) {
+    customPluginNode.render({ ctx, node, theme, strokeColor, strokeWidth, fillColor });
+    ctx.restore();
+    return;
+  }
+
   ctx.restore(); // Undo shadow
 
   // 3. Crisp Architectural Typography
@@ -505,9 +610,506 @@ export function renderNode(
   }
 }
 
-/**
- * Organic Rectangle with deterministic subtle harmonic stroke modulation.
- */
+// ==========================================
+// PURE NATIVE PATH2D DOMAIN SMART KITS
+// ==========================================
+
+function drawDsaArray(
+  ctx: CanvasRenderingContext2D,
+  node: CanvasNode,
+  strokeColor: string,
+  strokeWidth: number,
+  fillColor: string,
+  theme: 'light' | 'dark'
+): void {
+  const cells =
+    node._ext?.arrayCells && node._ext.arrayCells.length > 0
+      ? node._ext.arrayCells
+      : ['10', '24', '35', '77'];
+  const n = cells.length;
+  const cellW = node.width / n;
+  const x = node.x;
+  const y = node.y;
+  const h = node.height;
+
+  // Background
+  ctx.fillStyle =
+    fillColor !== 'transparent'
+      ? fillColor
+      : theme === 'dark'
+      ? '#161B22'
+      : '#FFFFFF';
+  ctx.fillRect(x, y, node.width, h);
+
+  // Outer border
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
+  ctx.strokeRect(x, y, node.width, h);
+
+  // Cell dividers and contents
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i < n; i++) {
+    const cx = x + i * cellW;
+    // Divider
+    if (i > 0) {
+      ctx.beginPath();
+      ctx.moveTo(cx, y);
+      ctx.lineTo(cx, y + h);
+      ctx.stroke();
+    }
+
+    // Index badge above cell: [0], [1], ...
+    ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = theme === 'dark' ? '#10B981' : '#059669';
+    ctx.fillText(`[${i}]`, cx + cellW / 2, y - 10);
+
+    // Value inside cell
+    ctx.font = '600 14px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = strokeColor;
+    ctx.fillText(cells[i], cx + cellW / 2, y + h / 2);
+  }
+}
+
+function drawDsaLinkedList(
+  ctx: CanvasRenderingContext2D,
+  node: CanvasNode,
+  strokeColor: string,
+  strokeWidth: number,
+  fillColor: string,
+  theme: 'light' | 'dark'
+): void {
+  const x = node.x;
+  const y = node.y;
+  const w = node.width;
+  const h = node.height;
+  const splitX = x + w * 0.68;
+
+  // Background
+  ctx.fillStyle =
+    fillColor !== 'transparent'
+      ? fillColor
+      : theme === 'dark'
+      ? '#161B22'
+      : '#FFFFFF';
+  ctx.fillRect(x, y, w, h);
+
+  // Outer border
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
+  ctx.strokeRect(x, y, w, h);
+
+  // Split line between data and next
+  ctx.beginPath();
+  ctx.moveTo(splitX, y);
+  ctx.lineTo(splitX, y + h);
+  ctx.stroke();
+
+  // Data label
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillStyle = strokeColor;
+  ctx.fillText(node.text || '42', x + (splitX - x) / 2, y + h / 2);
+
+  // Next pointer port dot
+  const dotX = splitX + (x + w - splitX) / 2;
+  const dotY = y + h / 2;
+  ctx.fillStyle = theme === 'dark' ? '#10B981' : '#059669';
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Small pointer stub: arrow pointing out right
+  ctx.beginPath();
+  ctx.moveTo(dotX + 4, dotY);
+  ctx.lineTo(x + w + 8, dotY);
+  ctx.strokeStyle = theme === 'dark' ? '#10B981' : '#059669';
+  ctx.stroke();
+
+  // Arrow head
+  ctx.beginPath();
+  ctx.moveTo(x + w + 4, dotY - 3);
+  ctx.lineTo(x + w + 8, dotY);
+  ctx.lineTo(x + w + 4, dotY + 3);
+  ctx.stroke();
+}
+
+function drawDsaBinaryTree(
+  ctx: CanvasRenderingContext2D,
+  node: CanvasNode,
+  strokeColor: string,
+  strokeWidth: number,
+  fillColor: string,
+  theme: 'light' | 'dark'
+): void {
+  const cx = node.x + node.width / 2;
+  const cy = node.y + node.height / 2;
+  const r = Math.min(node.width, node.height) / 2;
+
+  ctx.fillStyle =
+    fillColor !== 'transparent'
+      ? fillColor
+      : theme === 'dark'
+      ? '#161B22'
+      : '#FFFFFF';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
+  ctx.stroke();
+
+  // Value
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 14px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillStyle = strokeColor;
+  ctx.fillText(node.text || '8', cx, cy);
+
+  // Left & Right port hints (L, R)
+  ctx.font = '500 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillStyle = theme === 'dark' ? '#10B981' : '#059669';
+  ctx.fillText('L', cx - r * 0.55, cy + r * 0.7);
+  ctx.fillText('R', cx + r * 0.55, cy + r * 0.7);
+}
+
+function drawDsaStack(
+  ctx: CanvasRenderingContext2D,
+  node: CanvasNode,
+  strokeColor: string,
+  strokeWidth: number,
+  fillColor: string,
+  theme: 'light' | 'dark'
+): void {
+  const x = node.x;
+  const y = node.y;
+  const w = node.width;
+  const h = node.height;
+  const cells =
+    node._ext?.arrayCells && node._ext.arrayCells.length > 0
+      ? node._ext.arrayCells
+      : ['val 3', 'val 2', 'val 1'];
+
+  // Fill
+  ctx.fillStyle =
+    fillColor !== 'transparent'
+      ? fillColor
+      : theme === 'dark'
+      ? '#161B22'
+      : '#FFFFFF';
+  ctx.fillRect(x, y, w, h);
+
+  // U-shaped border (open top)
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x, y + h);
+  ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x + w, y);
+  ctx.stroke();
+
+  // Draw stacked items from bottom to top
+  const n = cells.length;
+  const cellH = (h - 10) / n;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i < n; i++) {
+    const itemY = y + h - (i + 1) * cellH;
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(x + 4, itemY);
+    ctx.lineTo(x + w - 4, itemY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.font = '500 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = strokeColor;
+    ctx.fillText(cells[cells.length - 1 - i], x + w / 2, itemY + cellH / 2);
+  }
+
+  // "TOP" indicator tag
+  ctx.font = '700 9px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillStyle = theme === 'dark' ? '#10B981' : '#059669';
+  ctx.fillText('▲ TOP', x + w / 2, y - 8);
+}
+
+function drawDsaQueue(
+  ctx: CanvasRenderingContext2D,
+  node: CanvasNode,
+  strokeColor: string,
+  strokeWidth: number,
+  fillColor: string,
+  theme: 'light' | 'dark'
+): void {
+  const x = node.x;
+  const y = node.y;
+  const w = node.width;
+  const h = node.height;
+  const cells =
+    node._ext?.arrayCells && node._ext.arrayCells.length > 0
+      ? node._ext.arrayCells
+      : ['D', 'C', 'B', 'A'];
+
+  // Fill
+  ctx.fillStyle =
+    fillColor !== 'transparent'
+      ? fillColor
+      : theme === 'dark'
+      ? '#161B22'
+      : '#FFFFFF';
+  ctx.fillRect(x, y, w, h);
+
+  // Top and bottom horizontal rails (open left and right)
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + w, y);
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x + w, y + h);
+  ctx.stroke();
+
+  // Vertical dividers
+  const n = cells.length;
+  const cellW = w / n;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i < n; i++) {
+    const cx = x + i * cellW;
+    if (i > 0) {
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(cx, y);
+      ctx.lineTo(cx, y + h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = strokeColor;
+    ctx.fillText(cells[i], cx + cellW / 2, y + h / 2);
+  }
+
+  // Flow tags
+  ctx.font = '700 8px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillStyle = theme === 'dark' ? '#10B981' : '#059669';
+  ctx.fillText('ENQUEUE →', x - 30, y + h / 2);
+  ctx.fillText('→ DEQUEUE', x + w + 32, y + h / 2);
+}
+
+function drawSysDatabase(
+  ctx: CanvasRenderingContext2D,
+  node: CanvasNode,
+  strokeColor: string,
+  strokeWidth: number,
+  fillColor: string,
+  theme: 'light' | 'dark'
+): void {
+  const x = node.x;
+  const y = node.y;
+  const w = node.width;
+  const h = node.height;
+  const rx = w / 2;
+  const ry = Math.min(14, h / 4);
+  const cx = x + rx;
+
+  ctx.fillStyle =
+    fillColor !== 'transparent'
+      ? fillColor
+      : theme === 'dark'
+      ? '#161B22'
+      : '#FFFFFF';
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
+
+  // Body path
+  ctx.beginPath();
+  ctx.ellipse(cx, y + ry, rx, ry, 0, Math.PI, 0, false);
+  ctx.lineTo(x + w, y + h - ry);
+  ctx.ellipse(cx, y + h - ry, rx, ry, 0, 0, Math.PI, false);
+  ctx.lineTo(x, y + ry);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Top lid ellipse
+  ctx.beginPath();
+  ctx.ellipse(cx, y + ry, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Interior disk divider lines
+  const d1 = y + ry + (h - ry * 2) * 0.35;
+  const d2 = y + ry + (h - ry * 2) * 0.7;
+
+  ctx.beginPath();
+  ctx.ellipse(cx, d1, rx, ry, 0, 0, Math.PI, false);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(cx, d2, rx, ry, 0, 0, Math.PI, false);
+  ctx.stroke();
+
+  // Text inside
+  if (node.text) {
+    ctx.font = '600 12px ui-sans-serif, -apple-system, sans-serif';
+    ctx.fillStyle = strokeColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lines = node.text.split('\n');
+    const midY = y + h / 2 + 4;
+    lines.forEach((line, idx) => {
+      ctx.fillText(line, cx, midY + (idx - (lines.length - 1) / 2) * 15, w - 16);
+    });
+  }
+}
+
+function drawSysContainer(
+  ctx: CanvasRenderingContext2D,
+  node: CanvasNode,
+  shape: string,
+  strokeColor: string,
+  strokeWidth: number,
+  fillColor: string,
+  theme: 'light' | 'dark'
+): void {
+  const x = node.x;
+  const y = node.y;
+  const w = node.width;
+  const h = node.height;
+  const r = 6;
+
+  // Background container
+  ctx.fillStyle =
+    fillColor !== 'transparent'
+      ? fillColor
+      : theme === 'dark'
+      ? '#161B22'
+      : '#FFFFFF';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
+  ctx.stroke();
+
+  // Top accent banner or glyph
+  const accentColor = strokeColor;
+
+  if (shape === 'sys-client') {
+    // Browser Chrome header bar
+    const barH = 22;
+    ctx.fillStyle = theme === 'dark' ? '#1F2633' : '#E5E7EB';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, barH, [r, r, 0, 0]);
+    ctx.fill();
+
+    // 3 Dots
+    const dotColors = ['#EF4444', '#F59E0B', '#10B981'];
+    dotColors.forEach((color, i) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x + 12 + i * 10, y + barH / 2, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // URL bar
+    ctx.fillStyle = theme === 'dark' ? '#0B0E14' : '#FFFFFF';
+    ctx.beginPath();
+    ctx.roundRect(x + 50, y + 4, w - 60, barH - 8, 3);
+    ctx.fill();
+    ctx.font = '500 8px ui-monospace, monospace';
+    ctx.fillStyle = theme === 'dark' ? '#9CA3AF' : '#6B7280';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('https://app.io', x + 56, y + barH / 2);
+  } else {
+    // Mini glyph badge on top-left
+    ctx.save();
+    ctx.translate(x + 16, y + 16);
+    ctx.strokeStyle = accentColor;
+    ctx.fillStyle = accentColor;
+    ctx.lineWidth = 1.5;
+
+    if (shape === 'sys-load-balancer') {
+      // 3 radiating distribution arrows
+      ctx.beginPath();
+      ctx.arc(0, 0, 4, 0, Math.PI * 2);
+      ctx.fill();
+      for (let a = 0; a < 3; a++) {
+        const rad = (a * 120 * Math.PI) / 180;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(rad) * 4, Math.sin(rad) * 4);
+        ctx.lineTo(Math.cos(rad) * 10, Math.sin(rad) * 10);
+        ctx.stroke();
+      }
+    } else if (shape === 'sys-api-gateway') {
+      // Fork gateway: line entering, splitting
+      ctx.beginPath();
+      ctx.moveTo(-8, 0);
+      ctx.lineTo(-2, 0);
+      ctx.lineTo(6, -6);
+      ctx.moveTo(-2, 0);
+      ctx.lineTo(8, 0);
+      ctx.moveTo(-2, 0);
+      ctx.lineTo(6, 6);
+      ctx.stroke();
+    } else if (shape === 'sys-microservice') {
+      // Hexagon / cube
+      ctx.beginPath();
+      ctx.rect(-6, -6, 12, 12);
+      ctx.stroke();
+      ctx.fillRect(-2, -2, 4, 4);
+    } else if (shape === 'sys-cache') {
+      // Lightning / RAM
+      ctx.beginPath();
+      ctx.moveTo(1, -7);
+      ctx.lineTo(-4, 0);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(-2, 7);
+      ctx.lineTo(5, -1);
+      ctx.lineTo(1, -1);
+      ctx.closePath();
+      ctx.fill();
+    } else if (shape === 'sys-queue') {
+      // Partitioned queue blocks
+      ctx.strokeRect(-8, -4, 5, 8);
+      ctx.strokeRect(-2, -4, 5, 8);
+      ctx.strokeRect(4, -4, 5, 8);
+    }
+    ctx.restore();
+  }
+
+  // Node text
+  if (node.text) {
+    ctx.font = '600 12px ui-sans-serif, -apple-system, sans-serif';
+    ctx.fillStyle = strokeColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lines = node.text.split('\n');
+    const offsetY = shape === 'sys-client' ? y + 22 + (h - 22) / 2 : y + h / 2 + 4;
+    lines.forEach((line, idx) => {
+      ctx.fillText(
+        line,
+        x + w / 2,
+        offsetY + (idx - (lines.length - 1) / 2) * 16,
+        w - 20
+      );
+    });
+  }
+}
+
 function drawOrganicRect(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -606,6 +1208,53 @@ function drawHatching(
 }
 
 /**
+ * Renders selectable endpoint markers (none | arrow | diamond | circle).
+ */
+export function renderEndpointMarker(
+  ctx: CanvasRenderingContext2D,
+  tip: { x: number; y: number },
+  angle: number,
+  marker: EndpointMarker = 'none',
+  color: string,
+  strokeWidth: number
+): void {
+  if (!marker || marker === 'none') return;
+
+  ctx.save();
+  ctx.translate(tip.x, tip.y);
+  ctx.rotate(angle);
+
+  if (marker === 'arrow') {
+    const headLen = 12;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-headLen, -headLen * 0.45);
+    ctx.lineTo(-headLen, headLen * 0.45);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  } else if (marker === 'diamond') {
+    const size = 8;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-size, -size * 0.6);
+    ctx.lineTo(-size * 2, 0);
+    ctx.lineTo(-size, size * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  } else if (marker === 'circle') {
+    const radius = 5;
+    ctx.beginPath();
+    ctx.arc(-radius, 0, radius, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+/**
  * Renders an edge connector with native Path2D precision and crisp arrowheads.
  */
 export function renderEdge(
@@ -614,33 +1263,14 @@ export function renderEdge(
   _unusedRc: any,
   renderCtx: RenderContext
 ): void {
-  const { ctx, theme, globalRenderMode } = renderCtx;
+  const { ctx, theme, globalRenderMode, spatialIndex, selectedIds } = renderCtx;
   const strokeColor = resolveColor(edge.color, theme);
   const strokeWidth = edge._ext?.strokeWidth || 2;
   const mode: RenderMode = edge._ext?.renderMode || globalRenderMode || 'precision';
 
-  let startX = 0;
-  let startY = 0;
-  let endX = 0;
-  let endY = 0;
-
-  if (edge._ext?.points && edge._ext.points.length >= 2) {
-    startX = edge._ext.points[0][0];
-    startY = edge._ext.points[0][1];
-    endX = edge._ext.points[edge._ext.points.length - 1][0];
-    endY = edge._ext.points[edge._ext.points.length - 1][1];
-  } else {
-    const fromNode = nodes[edge.fromNode];
-    const toNode = nodes[edge.toNode];
-    if (!fromNode || !toNode) return;
-
-    const fromPt = getAnchorPoint(fromNode, edge.fromSide || 'right');
-    const toPt = getAnchorPoint(toNode, edge.toSide || 'left');
-    startX = fromPt.x;
-    startY = fromPt.y;
-    endX = toPt.x;
-    endY = toPt.y;
-  }
+  const routed = routeEdge(edge, nodes, spatialIndex);
+  const points = routed.points;
+  if (points.length < 2) return;
 
   ctx.save();
   ctx.strokeStyle = strokeColor;
@@ -653,34 +1283,76 @@ export function renderEdge(
     ctx.setLineDash([]);
   }
 
-  ctx.beginPath();
-  ctx.moveTo(startX, startY);
-  ctx.lineTo(endX, endY);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Draw Arrowhead
-  if (edge.toEnd === 'arrow') {
-    const angle = Math.atan2(endY - startY, endX - startX);
-    const headLen = 12;
-    const arrowP1X = endX - headLen * Math.cos(angle - Math.PI / 6);
-    const arrowP1Y = endY - headLen * Math.sin(angle - Math.PI / 6);
-    const arrowP2X = endX - headLen * Math.cos(angle + Math.PI / 6);
-    const arrowP2Y = endY - headLen * Math.sin(angle + Math.PI / 6);
-
+  if (routed.routing === 'curved' && points.length === 4) {
     ctx.beginPath();
-    ctx.moveTo(endX, endY);
-    ctx.lineTo(arrowP1X, arrowP1Y);
-    ctx.lineTo(arrowP2X, arrowP2Y);
-    ctx.closePath();
-    ctx.fillStyle = strokeColor;
-    ctx.fill();
+    ctx.moveTo(points[0].x, points[0].y);
+    ctx.bezierCurveTo(
+      points[1].x,
+      points[1].y,
+      points[2].x,
+      points[2].y,
+      points[3].x,
+      points[3].y
+    );
+    ctx.stroke();
+
+    // Endpoints
+    const startAngle = Math.atan2(points[0].y - points[1].y, points[0].x - points[1].x);
+    const endAngle = Math.atan2(points[3].y - points[2].y, points[3].x - points[2].x);
+
+    renderEndpointMarker(ctx, points[0], startAngle, edge.fromEnd, strokeColor, strokeWidth);
+    renderEndpointMarker(ctx, points[3], endAngle, edge.toEnd, strokeColor, strokeWidth);
+  } else {
+    // Elbow or Straight
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
+
+    // Endpoints
+    const p0 = points[0];
+    const p1 = points[1];
+    const pn = points[points.length - 1];
+    const pnPrev = points[points.length - 2];
+
+    const startAngle = Math.atan2(p0.y - p1.y, p0.x - p1.x);
+    const endAngle = Math.atan2(pn.y - pnPrev.y, pn.x - pnPrev.x);
+
+    renderEndpointMarker(ctx, p0, startAngle, edge.fromEnd, strokeColor, strokeWidth);
+    renderEndpointMarker(ctx, pn, endAngle, edge.toEnd, strokeColor, strokeWidth);
+
+    // Interactive Middle Segment Drag Handle when selected
+    const isSelected = selectedIds.has(edge.id);
+    if (isSelected && routed.routing === 'elbow' && routed.middleSegmentIndex !== undefined) {
+      const segA = points[routed.middleSegmentIndex];
+      const segB = points[routed.middleSegmentIndex + 1];
+      if (segA && segB) {
+        const midSegX = (segA.x + segB.x) / 2;
+        const midSegY = (segA.y + segB.y) / 2;
+
+        ctx.save();
+        ctx.fillStyle = theme === 'dark' ? '#10B981' : '#059669';
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        if (routed.isMiddleVertical) {
+          ctx.roundRect(midSegX - 3.5, midSegY - 9, 7, 18, 3);
+        } else {
+          ctx.roundRect(midSegX - 9, midSegY - 3.5, 18, 7, 3);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
   }
 
   // Draw Midpoint Technical Label
   if (edge.label && edge.label.trim().length > 0) {
-    const midX = (startX + endX) / 2;
-    const midY = (startY + endY) / 2;
+    const midIdx = Math.floor(points.length / 2);
+    const midPt = points[midIdx] || points[0];
 
     ctx.font = '500 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
     const textMetrics = ctx.measureText(edge.label);
@@ -691,13 +1363,13 @@ export function renderEdge(
     ctx.fillStyle = theme === 'dark' ? '#11151D' : '#FFFFFF';
     ctx.strokeStyle = theme === 'dark' ? '#1F2633' : '#E4E4E7';
     ctx.lineWidth = 1;
-    ctx.fillRect(midX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH);
-    ctx.strokeRect(midX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH);
+    ctx.fillRect(midPt.x - badgeW / 2, midPt.y - badgeH / 2, badgeW, badgeH);
+    ctx.strokeRect(midPt.x - badgeW / 2, midPt.y - badgeH / 2, badgeW, badgeH);
 
     ctx.fillStyle = strokeColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(edge.label, midX, midY);
+    ctx.fillText(edge.label, midPt.x, midPt.y);
   }
 
   ctx.restore();
@@ -906,6 +1578,125 @@ export function renderRemoteCursors(
 
     ctx.restore();
   }
+
+  ctx.restore();
+}
+
+/**
+ * Renders crisp 1px dashed Emerald alignment guides with small 'x' intersection markers.
+ */
+export function renderSnapGuides(
+  ctx: CanvasRenderingContext2D,
+  guides: SnapGuide[],
+  theme: 'light' | 'dark'
+): void {
+  if (!guides || guides.length === 0) return;
+
+  const emerald = getEmeraldAccent(theme);
+  ctx.save();
+  ctx.strokeStyle = emerald;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+
+  for (const guide of guides) {
+    ctx.beginPath();
+    if (guide.type === 'vertical') {
+      ctx.moveTo(guide.pos, guide.start);
+      ctx.lineTo(guide.pos, guide.end);
+      ctx.stroke();
+
+      renderCrossMarker(ctx, guide.pos, guide.start, emerald);
+      renderCrossMarker(ctx, guide.pos, guide.end, emerald);
+    } else {
+      ctx.moveTo(guide.start, guide.pos);
+      ctx.lineTo(guide.end, guide.pos);
+      ctx.stroke();
+
+      renderCrossMarker(ctx, guide.start, guide.pos, emerald);
+      renderCrossMarker(ctx, guide.end, guide.pos, emerald);
+    }
+  }
+
+  ctx.restore();
+}
+
+function renderCrossMarker(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  const size = 3.5;
+  ctx.beginPath();
+  ctx.moveTo(x - size, y - size);
+  ctx.lineTo(x + size, y + size);
+  ctx.moveTo(x + size, y - size);
+  ctx.lineTo(x - size, y + size);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Renders CAD-style distance measurement lines with pixel gap telemetry badge.
+ */
+export function renderDistanceMeasurement(
+  ctx: CanvasRenderingContext2D,
+  measurement: DistanceMeasurement,
+  theme: 'light' | 'dark'
+): void {
+  const { axis, gap, x1, y1, x2, y2 } = measurement;
+  if (gap <= 0) return;
+
+  const accentColor = theme === 'dark' ? '#10B981' : '#059669';
+  ctx.save();
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 2]);
+
+  // Dimension line
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+
+  // Tick markers at ends
+  ctx.setLineDash([]);
+  const tickSize = 4;
+  if (axis === 'horizontal') {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1 - tickSize);
+    ctx.lineTo(x1, y1 + tickSize);
+    ctx.moveTo(x2, y2 - tickSize);
+    ctx.lineTo(x2, y2 + tickSize);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x1 - tickSize, y1);
+    ctx.lineTo(x1 + tickSize, y1);
+    ctx.moveTo(x2 - tickSize, y2);
+    ctx.lineTo(x2 + tickSize, y2);
+    ctx.stroke();
+  }
+
+  // Distance Badge
+  const midX = (x1 + x2) / 2;
+  const midY = (y1 + y2) / 2;
+  const label = `${gap}px`;
+
+  ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+  const textMetrics = ctx.measureText(label);
+  const badgeW = textMetrics.width + 10;
+  const badgeH = 16;
+
+  ctx.fillStyle = theme === 'dark' ? '#11151D' : '#FFFFFF';
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 1;
+  ctx.fillRect(midX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH);
+  ctx.strokeRect(midX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH);
+
+  ctx.fillStyle = accentColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, midX, midY);
 
   ctx.restore();
 }

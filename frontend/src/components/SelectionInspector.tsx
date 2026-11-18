@@ -1,13 +1,24 @@
 import React from 'react';
 import {
   Trash2,
-  Layers,
   Copy,
-  PenTool,
-  Ruler,
-  Compass,
+  CornerDownRight,
+  Spline,
+  Minus,
+  Circle,
+  Diamond,
+  ArrowRight,
 } from 'lucide-react';
-import { CanvasNode, CanvasEdge, Camera, BoundingBox, RenderMode, FillStyle } from '../types/canvas';
+import {
+  CanvasNode,
+  CanvasEdge,
+  Camera,
+  BoundingBox,
+  RenderMode,
+  FillStyle,
+  RoutingMode,
+  EndpointMarker,
+} from '../types/canvas';
 import { worldToScreen } from '../engine/camera';
 
 interface SelectionInspectorProps {
@@ -20,6 +31,8 @@ interface SelectionInspectorProps {
   onChangeStrokeWidth: (width: number) => void;
   onChangeFillStyle: (fillStyle: FillStyle) => void;
   onChangeRenderMode: (mode: RenderMode) => void;
+  onChangeRoutingMode?: (mode: RoutingMode) => void;
+  onChangeEndpoint?: (end: 'from' | 'to', marker: EndpointMarker) => void;
   onDelete: () => void;
   onDuplicate: () => void;
 }
@@ -43,6 +56,8 @@ export const SelectionInspector: React.FC<SelectionInspectorProps> = ({
   onChangeStrokeWidth,
   onChangeFillStyle,
   onChangeRenderMode,
+  onChangeRoutingMode,
+  onChangeEndpoint,
   onDelete,
   onDuplicate,
 }) => {
@@ -56,6 +71,9 @@ export const SelectionInspector: React.FC<SelectionInspectorProps> = ({
   const currentRenderMode: RenderMode =
     primaryNode?._ext?.renderMode || primaryEdge?._ext?.renderMode || 'precision';
   const currentFill = primaryNode?._ext?.fillStyle || 'none';
+  const currentRouting: RoutingMode =
+    primaryEdge?.routing || primaryEdge?._ext?.routing || 'elbow';
+  const currentToEnd: EndpointMarker = primaryEdge?.toEnd || 'arrow';
 
   // Calculate screen position: 10px above top bounding box center (accounting for 68px left rail + 64px header/ruler)
   const canvasOffsetX = 68;
@@ -151,8 +169,68 @@ export const SelectionInspector: React.FC<SelectionInspectorProps> = ({
         })}
       </div>
 
+      {/* Edge Connector Controls (Routing Mode & Endpoints) */}
+      {selectedEdges.length > 0 && onChangeRoutingMode && (
+        <div className="flex items-center gap-1 pl-2 border-l border-zinc-200 dark:border-[#1F2633]">
+          {/* Routing Mode */}
+          <div className="flex items-center gap-0.5 p-0.5 rounded bg-zinc-100 dark:bg-[#161C26] border border-zinc-200 dark:border-[#1F2633]">
+            {[
+              { id: 'elbow', label: 'Elbow', icon: <CornerDownRight className="w-3 h-3" /> },
+              { id: 'curved', label: 'Curved', icon: <Spline className="w-3 h-3" /> },
+              { id: 'straight', label: 'Straight', icon: <Minus className="w-3 h-3" /> },
+            ].map((r) => {
+              const isActive = currentRouting === r.id;
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => onChangeRoutingMode(r.id as RoutingMode)}
+                  title={`Routing: ${r.label}`}
+                  className={`p-1 rounded flex items-center justify-center transition-all ${
+                    isActive
+                      ? 'bg-emerald-500 text-white shadow-xs'
+                      : 'text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  {r.icon}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Endpoints Marker */}
+          {onChangeEndpoint && (
+            <div className="flex items-center gap-0.5 pl-1">
+              {[
+                { id: 'arrow', label: 'Arrow', icon: <ArrowRight className="w-3 h-3" /> },
+                { id: 'diamond', label: 'Diamond', icon: <Diamond className="w-3 h-3" /> },
+                { id: 'circle', label: 'Circle', icon: <Circle className="w-3 h-3" /> },
+                { id: 'none', label: 'None', icon: <Minus className="w-3 h-3" /> },
+              ].map((m) => {
+                const isActive = currentToEnd === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => onChangeEndpoint('to', m.id as EndpointMarker)}
+                    title={`End: ${m.label}`}
+                    className={`p-1 rounded flex items-center justify-center transition-all ${
+                      isActive
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                        : 'text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    {m.icon}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Fill Style Toggle (Shapes only) */}
-      {selectedNodes.some((n) => n._ext?.shape) && (
+      {selectedNodes.some((n) => n._ext?.shape && n._ext.shape !== 'frame') && (
         <div className="flex items-center gap-0.5 pl-1.5 border-l border-zinc-200 dark:border-[#1F2633]">
           {(['none', 'solid', 'hachure'] as FillStyle[]).map((f) => {
             const isActive = currentFill === f;

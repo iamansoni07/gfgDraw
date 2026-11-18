@@ -4,6 +4,7 @@ import {
   Square,
   Diamond,
   Circle,
+  Frame,
   ArrowUpRight,
   Minus,
   PenTool,
@@ -13,6 +14,7 @@ import {
   Undo2,
   Redo2,
   Lock,
+  Boxes,
 } from 'lucide-react';
 import { ToolType } from '../types/canvas';
 
@@ -25,6 +27,8 @@ interface ToolbarProps {
   onRedo: () => void;
   readOnly?: boolean;
   theme: 'light' | 'dark';
+  onToggleKits?: () => void;
+  isKitsOpen?: boolean;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -36,6 +40,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onRedo,
   readOnly = false,
   theme,
+  onToggleKits,
+  isKitsOpen,
 }) => {
   if (readOnly) {
     return (
@@ -71,6 +77,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       { id: 'rectangle', label: 'Rectangle', icon: <Square className="w-4 h-4" />, shortcut: 'R' },
       { id: 'diamond', label: 'Diamond', icon: <Diamond className="w-4 h-4" />, shortcut: 'D' },
       { id: 'ellipse', label: 'Ellipse', icon: <Circle className="w-4 h-4" />, shortcut: 'O' },
+      { id: 'frame', label: 'Frame / Slide', icon: <Frame className="w-4 h-4" />, shortcut: 'F' },
     ],
     [
       { id: 'arrow', label: 'Connector', icon: <ArrowUpRight className="w-4 h-4" />, shortcut: 'A' },
@@ -131,6 +138,30 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             })}
           </React.Fragment>
         ))}
+
+        {/* Smart Kits Toggle */}
+        {onToggleKits && (
+          <div className="relative group w-full flex justify-center mt-1 pt-1 border-t border-zinc-200 dark:border-zinc-800">
+            <button
+              type="button"
+              onClick={onToggleKits}
+              aria-label="Domain Smart Kits"
+              className={`relative w-[40px] h-[34px] flex items-center justify-center rounded transition-colors ${
+                isKitsOpen
+                  ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800/60'
+              }`}
+            >
+              {isKitsOpen && (
+                <span className="absolute left-0 top-1 bottom-1 w-[2.5px] bg-emerald-600 dark:bg-emerald-400 rounded-r" />
+              )}
+              <Boxes className="w-4 h-4" />
+            </button>
+            <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-[11px] font-medium whitespace-nowrap shadow-lg z-50 animate-in fade-in duration-75">
+              <span>Domain Smart Kits (DSA & System)</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom Undo / Redo */}

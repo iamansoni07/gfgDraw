@@ -11,6 +11,10 @@ import {
   ConnectionSide,
   ResizeHandle,
   FillStyle,
+  SnapGuide,
+  DistanceMeasurement,
+  RoutingMode,
+  EndpointMarker,
 } from '../types/canvas';
 import {
   screenToWorld,
@@ -19,7 +23,7 @@ import {
   getZoomToFitCamera,
   generateHexId,
 } from '../engine/camera';
-import { SpatialIndex, getNodeBoundingBox } from '../engine/spatialIndex';
+import { SpatialIndex, getNodeBoundingBox, getEdgeBoundingBox } from '../engine/spatialIndex';
 import {
   renderNode,
   renderEdge,
@@ -29,7 +33,13 @@ import {
   renderLaser,
   renderRemoteCursors,
   getAnchorPoint,
+  renderSnapGuides,
+  renderDistanceMeasurement,
 } from '../engine/renderer';
+import { computeSnap, computeDistanceMeasurement } from '../engine/snapping';
+import { routeEdge, hitTestEdge } from '../engine/connectorRouter';
+import { exportFramesToPdf } from '../engine/pdfExport';
+import { RenderCacheManager } from '../engine/renderCache';
 import { YjsStore } from '../store/yjsStore';
 import {
   exportCanvasFile,
@@ -45,6 +55,18 @@ import { RulerOverlay } from './RulerOverlay';
 import { BottomTelemetryBar } from './BottomTelemetryBar';
 import { SelectionInspector } from './SelectionInspector';
 import { ShareModal } from './ShareModal';
+import { PresentationOverlay } from './PresentationOverlay';
+import { CommandPalette } from './CommandPalette';
+import { DocSplitPane } from './DocSplitPane';
+import { CodeDrawer } from './CodeDrawer';
+import { SmartKitsDrawer } from './SmartKitsDrawer';
+import { AiAssistantModal } from './AiAssistantModal';
+import { McpModal } from './McpModal';
+import { WorkspaceModal } from './WorkspaceModal';
+import { HistoryDrawer } from './HistoryDrawer';
+import { embedSceneInPng, embedSceneInSvg, extractSceneFromFile } from '../engine/sceneEmbed';
+import { isSessionEncrypted } from '../engine/crypto';
+import { CustomExporter } from '../sdk/pluginApi';
 
 interface WhiteboardAppProps {
   theme?: 'light' | 'dark';
@@ -114,8 +136,27 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState<string>('');
 
-  // Modals
+  // Modals & Stage Overlays
   const [shareOpen, setShareOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [isPresentationMode, setIsPresentationMode] = useState(false);
+  const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+
+  // Phase 3 & 4 Studio Drawers & Modals
+  const [currentRoomId, setCurrentRoomId] = useState<string>(roomId);
+  const [isDocsOpen, setIsDocsOpen] = useState<boolean>(false);
+  const [isCodeDrawerOpen, setIsCodeDrawerOpen] = useState<boolean>(false);
+  const [isSmartKitsOpen, setIsSmartKitsOpen] = useState<boolean>(false);
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
+  const [isMcpModalOpen, setIsMcpModalOpen] = useState<boolean>(false);
+  const [isWorkspaceOpen, setIsWorkspaceOpen] = useState<boolean>(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
+  const [isEncrypted, setIsEncrypted] = useState<boolean>(() => isSessionEncrypted());
+
+  // Snapping & Measurement Guides
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
+  const [distanceMeasurement, setDistanceMeasurement] = useState<DistanceMeasurement | null>(null);
+  const [isAltKeyHeld, setIsAltKeyHeld] = useState(false);
 
   // Yjs Store & Spatial Index references
   const storeRef = useRef<YjsStore | null>(null);
@@ -132,15 +173,85 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
   const spacebarHeldRef = useRef<boolean>(false);
   const freehandPointsRef = useRef<number[][]>([]);
   const initialNodesStateRef = useRef<Record<string, CanvasNode>>({});
+  const isDraggingSegmentRef = useRef<{ edgeId: string; startOffset: number; isVertical: boolean } | null>(null);
+  const internalClipboardRef = useRef<{ nodes: CanvasNode[]; edges: CanvasEdge[] } | null>(null);
+  const frameChildrenInitialPosRef = useRef<Record<string, { x: number; y: number }>>({});
+  const animationFrameRef = useRef<number | null>(null);
+
+  // High-Scale Offscreen Render Cache & Multi-Touch/Stylus Refs
+  const renderCacheRef = useRef<RenderCacheManager>(new RenderCacheManager());
+  const activePointersRef = useRef<Map<number, { x: number; y: number; pointerType: string }>>(new Map());
+  const prevPinchRef = useRef<{ distance: number; midpoint: { x: number; y: number } } | null>(null);
+  const hasActivePenRef = useRef<boolean>(false);
+
+  // Room switching handler
+  const handleSwitchRoom = (newRoomId: string) => {
+    setCurrentRoomId(newRoomId);
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', newRoomId);
+    window.history.pushState({}, '', url.toString());
+  };
+
+  // Canvas anchor navigation (used by DocSplitPane chips)
+  const handleNavigateToNode = (nodeId: string) => {
+    if (!storeRef.current) return;
+    const nodes = storeRef.current.getPageNodes(activePageId);
+    const targetNode = nodes[nodeId];
+    if (targetNode) {
+      const screenCenterX = window.innerWidth / 2;
+      const screenCenterY = window.innerHeight / 2;
+      const targetCameraX = -(targetNode.x + targetNode.width / 2) + screenCenterX / camera.zoom;
+      const targetCameraY = -(targetNode.y + targetNode.height / 2) + screenCenterY / camera.zoom;
+      setCamera((prev) => ({ ...prev, x: targetCameraX, y: targetCameraY }));
+      setSelectedIds(new Set([nodeId]));
+    }
+  };
+
+  // Drag and drop handler for smart PNG/SVG and JSON Canvas files
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    if (isReadOnly || !storeRef.current) return;
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      const file = files[0];
+      try {
+        const doc = await extractSceneFromFile(file);
+        if (doc) {
+          storeRef.current.importFromJSONCanvas(activePageId, doc);
+        } else {
+          const fallback = await parseCanvasFile(file);
+          storeRef.current.importFromJSONCanvas(activePageId, fallback);
+        }
+      } catch (err) {
+        alert(`Error importing dropped diagram: ${(err as Error).message}`);
+      }
+    }
+  };
 
   // 1. Initialize Yjs Store
   useEffect(() => {
-    const store = new YjsStore({ roomId, role });
+    const store = new YjsStore({ roomId: currentRoomId, role });
     storeRef.current = store;
 
     const initialPage = store.ensureDefaultPage();
     setActivePageId(initialPage);
     setPages(store.getAllPages());
+
+    // Check for cached initial blueprint template
+    const cachedTemplate = localStorage.getItem(`gfg_init_doc_${currentRoomId}`);
+    if (cachedTemplate) {
+      try {
+        const parsed = JSON.parse(cachedTemplate);
+        store.importFromJSONCanvas(initialPage, parsed);
+        localStorage.removeItem(`gfg_init_doc_${currentRoomId}`);
+      } catch (err) {
+        console.warn('Failed to load cached template doc', err);
+      }
+    }
 
     // Subscription for doc changes
     const unsubDoc = store.subscribe(() => {
@@ -158,7 +269,21 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       unsubAwareness();
       store.destroy();
     };
-  }, [roomId, role]);
+  }, [currentRoomId, role]);
+
+  // Periodic automatic history snapshot
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (storeRef.current && role === 'edit') {
+        import('../store/historyStore').then(({ HistoryStore }) => {
+          if (storeRef.current) {
+            HistoryStore.saveSnapshot(currentRoomId, storeRef.current.doc, undefined, true).catch(() => {});
+          }
+        });
+      }
+    }, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [currentRoomId, role]);
 
   // Trigger repaint
   const [, setRepaintCount] = useState(0);
@@ -207,22 +332,6 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    // Canvas Background Surface:
-    // Light Mode: Studio Paper #F7F7F5
-    // Dark Mode: Carbon Studio #0B0E14
-    ctx.fillStyle = theme === 'dark' ? '#0B0E14' : '#F7F7F5';
-    ctx.fillRect(0, 0, rect.width, rect.height);
-
-    // Dot Matrix Background Grid
-    if (showGrid) {
-      drawGrid(ctx, camera, rect.width, rect.height, theme);
-    }
-
-    // World Transform
-    ctx.save();
-    ctx.translate(camera.x, camera.y);
-    ctx.scale(camera.zoom, camera.zoom);
-
     const store = storeRef.current;
     const nodes = store ? store.getPageNodes(activePageId) : {};
     const edges = store ? store.getPageEdges(activePageId) : {};
@@ -239,20 +348,83 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       currentPageId: activePageId,
       marqueeBox,
       dpr,
+      spatialIndex: spatialIndexRef.current,
+      showGrid,
     };
 
-    // Render Edges
-    for (const edge of Object.values(edges)) {
-      renderEdge(edge, nodes, null, renderCtx);
-    }
+    const isActivelyModifying = isInteractingRef.current && (selectedIds.size > 0 || activeTool === 'pen');
 
-    // Render Nodes
-    for (const node of Object.values(nodes)) {
-      renderNode(node, null, renderCtx);
+    if (isActivelyModifying) {
+      const allNodesList = Object.values(nodes);
+      const allEdgesList = Object.values(edges);
+      const staticNodes = allNodesList.filter((n) => !selectedIds.has(n.id));
+      const staticEdges = allEdgesList.filter(
+        (e) => !selectedIds.has(e.fromNode) && !selectedIds.has(e.toNode) && !selectedIds.has(e.id)
+      );
 
-      // Magnetic Anchor Ports when connecting
-      if ((activeTool === 'arrow' || activeTool === 'line') && node._ext?.shape) {
-        drawMagneticPorts(node, ctx, hoveredAnchor?.side, theme);
+      const version = store ? store.getVersion() : 1;
+      if (!renderCacheRef.current.shouldReuseCache(camera, activePageId, theme, globalRenderMode, showGrid, version)) {
+        renderCacheRef.current.updateStaticCache(
+          rect.width,
+          rect.height,
+          dpr,
+          renderCtx,
+          staticNodes,
+          staticEdges,
+          version
+        );
+      }
+      renderCacheRef.current.blitStaticCache(ctx, rect.width, rect.height);
+
+      // World Transform for active interactive elements
+      ctx.save();
+      ctx.translate(camera.x, camera.y);
+      ctx.scale(camera.zoom, camera.zoom);
+
+      // Render active edges
+      for (const edge of allEdgesList) {
+        if (selectedIds.has(edge.fromNode) || selectedIds.has(edge.toNode) || selectedIds.has(edge.id)) {
+          renderEdge(edge, nodes, null, renderCtx);
+        }
+      }
+
+      // Render active nodes
+      for (const id of selectedIds) {
+        const node = nodes[id];
+        if (node) renderNode(node, null, renderCtx);
+      }
+    } else {
+      renderCacheRef.current.invalidate();
+
+      // Canvas Background Surface:
+      // Light Mode: Studio Paper #F7F7F5
+      // Dark Mode: Carbon Studio #0B0E14
+      ctx.fillStyle = theme === 'dark' ? '#0B0E14' : '#F7F7F5';
+      ctx.fillRect(0, 0, rect.width, rect.height);
+
+      // Dot Matrix Background Grid
+      if (showGrid) {
+        drawGrid(ctx, camera, rect.width, rect.height, theme);
+      }
+
+      // World Transform
+      ctx.save();
+      ctx.translate(camera.x, camera.y);
+      ctx.scale(camera.zoom, camera.zoom);
+
+      // Render Edges
+      for (const edge of Object.values(edges)) {
+        renderEdge(edge, nodes, null, renderCtx);
+      }
+
+      // Render Nodes
+      for (const node of Object.values(nodes)) {
+        renderNode(node, null, renderCtx);
+
+        // Magnetic Anchor Ports when connecting
+        if ((activeTool === 'arrow' || activeTool === 'line') && node._ext?.shape) {
+          drawMagneticPorts(node, ctx, hoveredAnchor?.side, theme);
+        }
       }
     }
 
@@ -271,7 +443,15 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
           strokeColor,
         },
       };
-      renderNode(liveNode, rc, renderCtx);
+      renderNode(liveNode, null, renderCtx);
+    }
+
+    // Render Magnetic Alignment Snap Guides
+    renderSnapGuides(ctx, snapGuides, theme);
+
+    // Render CAD-style Distance Telemetry Lines
+    if (distanceMeasurement) {
+      renderDistanceMeasurement(ctx, distanceMeasurement, theme);
     }
 
     // Selection Bounding Box with Circular Resize Handles
@@ -335,6 +515,30 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
 
   // 3. Pointer & Mouse Event Handlers
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Stylus Palm Rejection:
+    if (e.pointerType === 'pen') {
+      hasActivePenRef.current = true;
+    }
+    if (e.pointerType === 'touch' && hasActivePenRef.current) {
+      return;
+    }
+
+    activePointersRef.current.set(e.pointerId, {
+      x: e.clientX,
+      y: e.clientY,
+      pointerType: e.pointerType,
+    });
+
+    // Multi-touch 2-finger gesture initiation (Pinch-to-zoom / Two-finger pan)
+    if (activePointersRef.current.size === 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
+      prevPinchRef.current = { distance: dist, midpoint: { x: midX, y: midY } };
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -371,22 +575,76 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
 
     // Select Tool Hit Testing
     if (activeTool === 'select') {
+      const edges = storeRef.current ? storeRef.current.getPageEdges(activePageId) : {};
+      const nodes = storeRef.current ? storeRef.current.getPageNodes(activePageId) : {};
+
+      // 1. Check if user clicked an edge connector or its middle segment handle
+      let hitEdgeId: string | null = null;
+      let isMidSeg = false;
+      for (const edge of Object.values(edges)) {
+        const routed = routeEdge(edge, nodes, spatialIndexRef.current);
+        const test = hitTestEdge(worldPos.x, worldPos.y, routed, 8);
+        if (test.hit) {
+          hitEdgeId = edge.id;
+          isMidSeg = test.isMiddleSegment;
+          break;
+        }
+      }
+
+      if (hitEdgeId) {
+        setSelectedIds(new Set([hitEdgeId]));
+        if (isMidSeg) {
+          const edge = edges[hitEdgeId];
+          const routed = routeEdge(edge, nodes, spatialIndexRef.current);
+          isDraggingSegmentRef.current = {
+            edgeId: hitEdgeId,
+            startOffset: edge._ext?.segmentOffset || 0,
+            isVertical: routed.isMiddleVertical ?? true,
+          };
+        }
+        return;
+      }
+
+      // 2. Node Hit Testing
       const hits = spatialIndexRef.current.hitTest(worldPos.x, worldPos.y, 8);
       if (hits.length > 0) {
         const topHitId = hits[hits.length - 1].id;
+        let newSel: Set<string>;
         if (e.shiftKey) {
-          setSelectedIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(topHitId)) next.delete(topHitId);
-            else next.add(topHitId);
-            return next;
-          });
+          newSel = new Set(selectedIds);
+          if (newSel.has(topHitId)) newSel.delete(topHitId);
+          else newSel.add(topHitId);
         } else if (!selectedIds.has(topHitId)) {
-          setSelectedIds(new Set([topHitId]));
+          newSel = new Set([topHitId]);
+        } else {
+          newSel = selectedIds;
         }
+        setSelectedIds(newSel);
 
         if (storeRef.current) {
-          initialNodesStateRef.current = storeRef.current.getPageNodes(activePageId);
+          const allNodes = storeRef.current.getPageNodes(activePageId);
+          initialNodesStateRef.current = allNodes;
+
+          // Frame child detection: if any selected node is a frame, find its enclosed children
+          const frameChildren: Record<string, { x: number; y: number }> = {};
+          for (const sId of newSel) {
+            const frameNode = allNodes[sId];
+            if (frameNode && (frameNode.type === 'frame' || frameNode._ext?.shape === 'frame')) {
+              for (const other of Object.values(allNodes)) {
+                if (other.id !== frameNode.id && !newSel.has(other.id)) {
+                  if (
+                    other.x >= frameNode.x &&
+                    other.x + other.width <= frameNode.x + frameNode.width &&
+                    other.y >= frameNode.y &&
+                    other.y + other.height <= frameNode.y + frameNode.height
+                  ) {
+                    frameChildren[other.id] = { x: other.x, y: other.y };
+                  }
+                }
+              }
+            }
+          }
+          frameChildrenInitialPosRef.current = frameChildren;
         }
       } else {
         // Clicked empty space
@@ -404,6 +662,50 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Stylus Palm Rejection:
+    if (e.pointerType === 'touch' && hasActivePenRef.current) {
+      return;
+    }
+
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        pointerType: e.pointerType,
+      });
+    }
+
+    // Two-finger pinch-to-zoom and pan
+    if (activePointersRef.current.size === 2 && prevPinchRef.current) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const pts = Array.from(activePointersRef.current.values());
+      const newDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      const newMidX = (pts[0].x + pts[1].x) / 2;
+      const newMidY = (pts[0].y + pts[1].y) / 2;
+      const prevPinch = prevPinchRef.current;
+
+      if (prevPinch.distance > 0 && newDist > 0) {
+        const zoomFactor = newDist / prevPinch.distance;
+        const rect = canvas.getBoundingClientRect();
+        const screenMidX = newMidX - rect.left;
+        const screenMidY = newMidY - rect.top;
+
+        setCamera((c) => {
+          const nextZoom = Math.min(Math.max(c.zoom * zoomFactor, 0.1), 5.0);
+          const dx = newMidX - prevPinch.midpoint.x;
+          const dy = newMidY - prevPinch.midpoint.y;
+          return {
+            zoom: nextZoom,
+            x: screenMidX - (screenMidX - c.x) * (nextZoom / c.zoom) + dx,
+            y: screenMidY - (screenMidY - c.y) * (nextZoom / c.zoom) + dy,
+          };
+        });
+      }
+      prevPinchRef.current = { distance: newDist, midpoint: { x: newMidX, y: newMidY } };
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -428,6 +730,52 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       interactionStartRef.current.screenX = screenX;
       interactionStartRef.current.screenY = screenY;
       return;
+    }
+
+    // Middle segment drag
+    if (isDraggingSegmentRef.current && storeRef.current) {
+      const dragSeg = isDraggingSegmentRef.current;
+      const dx = worldPos.x - interactionStartRef.current.worldX;
+      const dy = worldPos.y - interactionStartRef.current.worldY;
+      const offsetDelta = dragSeg.isVertical ? dx : dy;
+      const edge = storeRef.current.getPageEdges(activePageId)[dragSeg.edgeId];
+      if (edge) {
+        storeRef.current.setEdge(activePageId, {
+          ...edge,
+          _ext: {
+            ...edge._ext,
+            segmentOffset: dragSeg.startOffset + offsetDelta,
+          },
+        });
+      }
+      return;
+    }
+
+    // Alt distance measurement
+    if ((e.altKey || isAltKeyHeld) && selectedIds.size > 0 && !isInteractingRef.current && selectionBounds) {
+      const hits = spatialIndexRef.current.hitTest(worldPos.x, worldPos.y, 8);
+      const hitNode = hits.find((h) => h.kind === 'node' && !selectedIds.has(h.id));
+      if (hitNode && storeRef.current) {
+        const nodes = storeRef.current.getPageNodes(activePageId);
+        const hoveredNode = nodes[hitNode.id];
+        if (hoveredNode) {
+          const hBox: BoundingBox = {
+            minX: hoveredNode.x,
+            minY: hoveredNode.y,
+            maxX: hoveredNode.x + hoveredNode.width,
+            maxY: hoveredNode.y + hoveredNode.height,
+          };
+          const dist = computeDistanceMeasurement(selectionBounds, hBox);
+          setDistanceMeasurement(dist);
+          triggerRender();
+        }
+      } else if (distanceMeasurement) {
+        setDistanceMeasurement(null);
+        triggerRender();
+      }
+    } else if (distanceMeasurement && !isInteractingRef.current) {
+      setDistanceMeasurement(null);
+      triggerRender();
     }
 
     if (!isInteractingRef.current) {
@@ -500,11 +848,35 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       return;
     }
 
-    // Drag-to-move selected elements
-    if (activeTool === 'select' && selectedIds.size > 0 && storeRef.current) {
-      const dx = worldPos.x - interactionStartRef.current.worldX;
-      const dy = worldPos.y - interactionStartRef.current.worldY;
+    // Drag-to-move selected elements with Snapping & Frame Child Propagation
+    if (activeTool === 'select' && selectedIds.size > 0 && storeRef.current && isInteractingRef.current) {
+      let dx = worldPos.x - interactionStartRef.current.worldX;
+      let dy = worldPos.y - interactionStartRef.current.worldY;
       const initial = initialNodesStateRef.current;
+
+      // Calculate bounding box of primary moving selection to test snap
+      let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity;
+      for (const id of selectedIds) {
+        const orig = initial[id];
+        if (orig) {
+          sMinX = Math.min(sMinX, orig.x + dx);
+          sMinY = Math.min(sMinY, orig.y + dy);
+          sMaxX = Math.max(sMaxX, orig.x + orig.width + dx);
+          sMaxY = Math.max(sMaxY, orig.y + orig.height + dy);
+        }
+      }
+
+      if (sMinX !== Infinity) {
+        const snap = computeSnap(
+          { minX: sMinX, minY: sMinY, maxX: sMaxX, maxY: sMaxY },
+          selectedIds,
+          initial,
+          spatialIndexRef.current
+        );
+        dx += snap.deltaX;
+        dy += snap.deltaY;
+        setSnapGuides(snap.guides);
+      }
 
       const updatedNodes: CanvasNode[] = [];
       for (const id of selectedIds) {
@@ -532,6 +904,18 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
         }
       }
 
+      // Also move enclosed frame children
+      for (const [childId, childInit] of Object.entries(frameChildrenInitialPosRef.current)) {
+        const origChild = initial[childId];
+        if (origChild && !selectedIds.has(childId)) {
+          updatedNodes.push({
+            ...origChild,
+            x: childInit.x + dx,
+            y: childInit.y + dy,
+          });
+        }
+      }
+
       if (updatedNodes.length > 0) {
         storeRef.current.setNodes(activePageId, updatedNodes);
       }
@@ -539,7 +923,19 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.delete(e.pointerId);
+    if (e.pointerType === 'pen') {
+      hasActivePenRef.current = false;
+    }
+    if (activePointersRef.current.size < 2) {
+      prevPinchRef.current = null;
+    }
+
     isInteractingRef.current = false;
+    setSnapGuides([]);
+    isDraggingSegmentRef.current = null;
+    frameChildrenInitialPosRef.current = {};
+
     const canvas = canvasRef.current;
     if (!canvas || !storeRef.current) return;
 
@@ -578,32 +974,39 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       return;
     }
 
-    // Shape Creation Completion (Rectangle, Diamond, Ellipse, Text)
-    if (['rectangle', 'diamond', 'ellipse', 'text'].includes(activeTool)) {
+    // Shape Creation Completion (Rectangle, Diamond, Ellipse, Frame, Text)
+    if (['rectangle', 'diamond', 'ellipse', 'frame', 'text'].includes(activeTool)) {
       const w = Math.abs(worldPos.x - startWorld.worldX);
       const h = Math.abs(worldPos.y - startWorld.worldY);
       const minX = Math.min(startWorld.worldX, worldPos.x);
       const minY = Math.min(startWorld.worldY, worldPos.y);
 
-      const width = Math.max(activeTool === 'text' ? 140 : 40, w);
-      const height = Math.max(activeTool === 'text' ? 50 : 40, h);
+      const isFrame = activeTool === 'frame';
+      const width = Math.max(isFrame ? 220 : activeTool === 'text' ? 140 : 40, w);
+      const height = Math.max(isFrame ? 150 : activeTool === 'text' ? 50 : 40, h);
+
+      const allNodes = storeRef.current.getPageNodes(activePageId);
+      const frameCount = Object.values(allNodes).filter(
+        (n) => n.type === 'frame' || n._ext?.shape === 'frame'
+      ).length;
 
       const newNode: CanvasNode = {
         id: generateHexId(),
-        type: activeTool === 'text' ? 'text' : 'shape',
+        type: isFrame ? 'frame' : activeTool === 'text' ? 'text' : 'shape',
         x: minX,
         y: minY,
         width,
         height,
-        color: strokeColor,
-        text: activeTool === 'text' ? 'Text label' : '',
+        color: isFrame ? '#10B981' : strokeColor,
+        text: isFrame ? `Frame ${frameCount + 1}` : activeTool === 'text' ? 'Text label' : '',
         _ext: {
-          shape: activeTool === 'text' ? 'rectangle' : (activeTool as any),
+          shape: isFrame ? 'frame' : activeTool === 'text' ? 'rectangle' : (activeTool as any),
           strokeWidth,
           strokeColor,
           renderMode: globalRenderMode,
           seed: Math.floor(Math.random() * 100000),
-          roughness: 1,
+          frameTitle: isFrame ? `Frame ${frameCount + 1}` : undefined,
+          frameOrder: isFrame ? frameCount + 1 : undefined,
         },
       };
 
@@ -732,7 +1135,307 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
     }
   };
 
-  // 6. Keyboard Shortcuts
+  // 6. Presentation Mode & Slide Camera Animation
+  const getOrderedFrames = useCallback(() => {
+    if (!storeRef.current) return [];
+    const nodes = storeRef.current.getPageNodes(activePageId);
+    const frames = Object.values(nodes).filter(
+      (n) => n.type === 'frame' || n._ext?.shape === 'frame'
+    );
+    frames.sort((a, b) => {
+      const orderA = a._ext?.frameOrder ?? a.y * 10000 + a.x;
+      const orderB = b._ext?.frameOrder ?? b.y * 10000 + b.x;
+      return orderA - orderB;
+    });
+    return frames;
+  }, [activePageId]);
+
+  const animateCameraToFrame = useCallback(
+    (frame: CanvasNode) => {
+      if (!canvasRef.current) return;
+      const canvasW = canvasRef.current.clientWidth;
+      const canvasH = canvasRef.current.clientHeight;
+
+      const pad = 60;
+      const scale = Math.min((canvasW - pad * 2) / frame.width, (canvasH - pad * 2) / frame.height);
+      const targetZoom = Math.min(2.5, Math.max(0.2, scale));
+
+      const cx = canvasW / 2;
+      const cy = canvasH / 2;
+      const frameCenterX = frame.x + frame.width / 2;
+      const frameCenterY = frame.y + frame.height / 2;
+
+      const targetX = cx - frameCenterX * targetZoom;
+      const targetY = cy - frameCenterY * targetZoom;
+
+      const startCamera = { ...camera };
+      const startTime = performance.now();
+      const duration = 350;
+
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+      const step = (now: number) => {
+        const elapsed = now - startTime;
+        const progress = Math.min(1, elapsed / duration);
+        const eased = easeOutCubic(progress);
+
+        const nextCam: Camera = {
+          x: startCamera.x + (targetX - startCamera.x) * eased,
+          y: startCamera.y + (targetY - startCamera.y) * eased,
+          zoom: startCamera.zoom + (targetZoom - startCamera.zoom) * eased,
+        };
+
+        setCamera(nextCam);
+
+        if (storeRef.current) {
+          storeRef.current.updateLocalCursor(null, activePageId, nextCam, true);
+        }
+
+        if (progress < 1) {
+          animationFrameRef.current = requestAnimationFrame(step);
+        }
+      };
+
+      animationFrameRef.current = requestAnimationFrame(step);
+    },
+    [camera, activePageId]
+  );
+
+  const handleStartPresentation = useCallback(() => {
+    const frames = getOrderedFrames();
+    if (frames.length === 0) {
+      alert('No Frames found. Create one or more frames using the Frame tool (F) to start presentation mode.');
+      return;
+    }
+    setIsPresentationMode(true);
+    setActiveSlideIndex(0);
+    animateCameraToFrame(frames[0]);
+  }, [getOrderedFrames, animateCameraToFrame]);
+
+  const handleNextSlide = useCallback(() => {
+    const frames = getOrderedFrames();
+    if (frames.length === 0) return;
+    const nextIdx = Math.min(frames.length - 1, activeSlideIndex + 1);
+    setActiveSlideIndex(nextIdx);
+    animateCameraToFrame(frames[nextIdx]);
+  }, [getOrderedFrames, activeSlideIndex, animateCameraToFrame]);
+
+  const handlePrevSlide = useCallback(() => {
+    const frames = getOrderedFrames();
+    if (frames.length === 0) return;
+    const prevIdx = Math.max(0, activeSlideIndex - 1);
+    setActiveSlideIndex(prevIdx);
+    animateCameraToFrame(frames[prevIdx]);
+  }, [getOrderedFrames, activeSlideIndex, animateCameraToFrame]);
+
+  // 7. Clipboard Copy & Paste
+  const handleCopy = useCallback(() => {
+    if (!storeRef.current || selectedIds.size === 0) return;
+    const nodes = storeRef.current.getPageNodes(activePageId);
+    const edges = storeRef.current.getPageEdges(activePageId);
+
+    const copiedNodes: CanvasNode[] = [];
+    selectedIds.forEach((id) => {
+      if (nodes[id]) copiedNodes.push({ ...nodes[id] });
+    });
+
+    const copiedEdges: CanvasEdge[] = [];
+    Object.values(edges).forEach((e) => {
+      if (selectedIds.has(e.fromNode) && selectedIds.has(e.toNode)) {
+        copiedEdges.push({ ...e });
+      }
+    });
+
+    internalClipboardRef.current = { nodes: copiedNodes, edges: copiedEdges };
+  }, [selectedIds, activePageId]);
+
+  const handlePaste = useCallback(() => {
+    if (!storeRef.current || !internalClipboardRef.current) return;
+    const { nodes: clipNodes, edges: clipEdges } = internalClipboardRef.current;
+    if (clipNodes.length === 0) return;
+
+    const idMap: Record<string, string> = {};
+    const newNodes: CanvasNode[] = [];
+    const newSelectedIds = new Set<string>();
+
+    for (const node of clipNodes) {
+      const newId = generateHexId();
+      idMap[node.id] = newId;
+      newSelectedIds.add(newId);
+
+      const shiftedNode: CanvasNode = {
+        ...node,
+        id: newId,
+        x: node.x + 24,
+        y: node.y + 24,
+      };
+
+      if (shiftedNode._ext?.freehandPoints) {
+        shiftedNode._ext = {
+          ...shiftedNode._ext,
+          freehandPoints: shiftedNode._ext.freehandPoints.map((pt) => [
+            pt[0] + 24,
+            pt[1] + 24,
+            pt[2] ?? 0.5,
+          ]),
+        };
+      }
+
+      newNodes.push(shiftedNode);
+    }
+
+    const newEdges: CanvasEdge[] = [];
+    for (const edge of clipEdges) {
+      const newFrom = idMap[edge.fromNode];
+      const newTo = idMap[edge.toNode];
+      if (newFrom && newTo) {
+        newEdges.push({
+          ...edge,
+          id: generateHexId(),
+          fromNode: newFrom,
+          toNode: newTo,
+        });
+      }
+    }
+
+    storeRef.current.doc.transact(() => {
+      storeRef.current?.setNodes(activePageId, newNodes);
+      for (const e of newEdges) {
+        storeRef.current?.setEdge(activePageId, e);
+      }
+    });
+
+    setSelectedIds(newSelectedIds);
+    internalClipboardRef.current = {
+      nodes: newNodes,
+      edges: newEdges,
+    };
+  }, [activePageId]);
+
+  // 8. Alignment & Distribution
+  const handleAlign = useCallback(
+    (alignment: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
+      if (!storeRef.current || selectedIds.size < 2) return;
+      const nodes = storeRef.current.getPageNodes(activePageId);
+      const selectedList = Array.from(selectedIds)
+        .map((id) => nodes[id])
+        .filter(Boolean);
+      if (selectedList.length < 2) return;
+
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+
+      for (const n of selectedList) {
+        minX = Math.min(minX, n.x);
+        maxX = Math.max(maxX, n.x + n.width);
+        minY = Math.min(minY, n.y);
+        maxY = Math.max(maxY, n.y + n.height);
+      }
+
+      const updated: CanvasNode[] = [];
+      for (const n of selectedList) {
+        let nx = n.x;
+        let ny = n.y;
+        if (alignment === 'left') nx = minX;
+        else if (alignment === 'center') nx = (minX + maxX) / 2 - n.width / 2;
+        else if (alignment === 'right') nx = maxX - n.width;
+        else if (alignment === 'top') ny = minY;
+        else if (alignment === 'middle') ny = (minY + maxY) / 2 - n.height / 2;
+        else if (alignment === 'bottom') ny = maxY - n.height;
+
+        updated.push({ ...n, x: nx, y: ny });
+      }
+
+      storeRef.current.setNodes(activePageId, updated);
+    },
+    [selectedIds, activePageId]
+  );
+
+  const handleDistribute = useCallback(
+    (axis: 'horizontal' | 'vertical') => {
+      if (!storeRef.current || selectedIds.size < 3) return;
+      const nodes = storeRef.current.getPageNodes(activePageId);
+      const selectedList = Array.from(selectedIds)
+        .map((id) => nodes[id])
+        .filter(Boolean);
+      if (selectedList.length < 3) return;
+
+      if (axis === 'horizontal') {
+        selectedList.sort((a, b) => a.x - b.x);
+        const first = selectedList[0];
+        const last = selectedList[selectedList.length - 1];
+        const totalWidth = selectedList.reduce((acc, n) => acc + n.width, 0);
+        const span = last.x + last.width - first.x;
+        const gap = (span - totalWidth) / (selectedList.length - 1);
+
+        let currentX = first.x;
+        const updated: CanvasNode[] = [];
+        for (const n of selectedList) {
+          updated.push({ ...n, x: currentX });
+          currentX += n.width + gap;
+        }
+        storeRef.current.setNodes(activePageId, updated);
+      } else {
+        selectedList.sort((a, b) => a.y - b.y);
+        const first = selectedList[0];
+        const last = selectedList[selectedList.length - 1];
+        const totalHeight = selectedList.reduce((acc, n) => acc + n.height, 0);
+        const span = last.y + last.height - first.y;
+        const gap = (span - totalHeight) / (selectedList.length - 1);
+
+        let currentY = first.y;
+        const updated: CanvasNode[] = [];
+        for (const n of selectedList) {
+          updated.push({ ...n, y: currentY });
+          currentY += n.height + gap;
+        }
+        storeRef.current.setNodes(activePageId, updated);
+      }
+    },
+    [selectedIds, activePageId]
+  );
+
+  const handleBringToFront = useCallback(() => {
+    if (!storeRef.current || selectedIds.size === 0) return;
+    const nodes = storeRef.current.getPageNodes(activePageId);
+    let maxZ = 0;
+    Object.values(nodes).forEach((n) => {
+      maxZ = Math.max(maxZ, n._ext?.zIndex || 0);
+    });
+    const updated: CanvasNode[] = [];
+    selectedIds.forEach((id) => {
+      const n = nodes[id];
+      if (n) {
+        updated.push({ ...n, _ext: { ...n._ext, zIndex: maxZ + 1 } });
+      }
+    });
+    storeRef.current.setNodes(activePageId, updated);
+  }, [selectedIds, activePageId]);
+
+  const handleSendToBack = useCallback(() => {
+    if (!storeRef.current || selectedIds.size === 0) return;
+    const nodes = storeRef.current.getPageNodes(activePageId);
+    let minZ = 0;
+    Object.values(nodes).forEach((n) => {
+      minZ = Math.min(minZ, n._ext?.zIndex || 0);
+    });
+    const updated: CanvasNode[] = [];
+    selectedIds.forEach((id) => {
+      const n = nodes[id];
+      if (n) {
+        updated.push({ ...n, _ext: { ...n._ext, zIndex: minZ - 1 } });
+      }
+    });
+    storeRef.current.setNodes(activePageId, updated);
+  }, [selectedIds, activePageId]);
+
+  // 9. Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (editingNodeId || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -741,6 +1444,54 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
 
       if (e.code === 'Space') {
         spacebarHeldRef.current = true;
+      }
+
+      if (e.key === 'Alt') {
+        setIsAltKeyHeld(true);
+      }
+
+      // Quick Command Palette: Cmd+K / Ctrl+K
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      // Start / Toggle Presentation Mode: Cmd+Enter / Ctrl+Enter
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (isPresentationMode) {
+          setIsPresentationMode(false);
+        } else {
+          handleStartPresentation();
+        }
+        return;
+      }
+
+      // Copy: Cmd+C / Ctrl+C
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        handleCopy();
+        return;
+      }
+
+      // Paste: Cmd+V / Ctrl+V
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        handlePaste();
+        return;
+      }
+
+      // Layer ordering: ] for front, [ for back
+      if (e.key === ']') {
+        e.preventDefault();
+        handleBringToFront();
+        return;
+      }
+      if (e.key === '[') {
+        e.preventDefault();
+        handleSendToBack();
+        return;
       }
 
       // Zoom to Fit: Shift + 1
@@ -782,6 +1533,7 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       if (key === 'R') setActiveTool('rectangle');
       if (key === 'D') setActiveTool('diamond');
       if (key === 'O') setActiveTool('ellipse');
+      if (key === 'F') setActiveTool('frame');
       if (key === 'A') setActiveTool('arrow');
       if (key === 'L') setActiveTool('line');
       if (key === 'P') setActiveTool('pen');
@@ -794,6 +1546,10 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       if (e.code === 'Space') {
         spacebarHeldRef.current = false;
       }
+      if (e.key === 'Alt') {
+        setIsAltKeyHeld(false);
+        setDistanceMeasurement(null);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -802,7 +1558,17 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [editingNodeId, selectedIds, activePageId]);
+  }, [
+    editingNodeId,
+    selectedIds,
+    activePageId,
+    isPresentationMode,
+    handleStartPresentation,
+    handleCopy,
+    handlePaste,
+    handleBringToFront,
+    handleSendToBack,
+  ]);
 
   // Contextual Selection Operations
   const handleDuplicateSelected = () => {
@@ -907,6 +1673,35 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
     if (updated.length > 0) storeRef.current.setNodes(activePageId, updated);
   };
 
+  const handleChangeSelectedRoutingMode = (mode: RoutingMode) => {
+    if (!storeRef.current || selectedIds.size === 0 || isReadOnly) return;
+    const edges = storeRef.current.getPageEdges(activePageId);
+    for (const id of selectedIds) {
+      const e = edges[id];
+      if (e) {
+        storeRef.current.setEdge(activePageId, {
+          ...e,
+          routing: mode,
+          _ext: { ...e._ext, routing: mode },
+        });
+      }
+    }
+  };
+
+  const handleChangeSelectedEndpoint = (end: 'from' | 'to', marker: EndpointMarker) => {
+    if (!storeRef.current || selectedIds.size === 0 || isReadOnly) return;
+    const edges = storeRef.current.getPageEdges(activePageId);
+    for (const id of selectedIds) {
+      const e = edges[id];
+      if (e) {
+        storeRef.current.setEdge(activePageId, {
+          ...e,
+          ...(end === 'from' ? { fromEnd: marker } : { toEnd: marker }),
+        });
+      }
+    }
+  };
+
   // Zoom Helpers
   const handleZoomIn = () => {
     if (!canvasRef.current) return;
@@ -949,7 +1744,9 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
 
   // Calculate Selection Bounding Box for Contextual Inspector
   const activeNodes = storeRef.current ? storeRef.current.getPageNodes(activePageId) : {};
+  const activeEdges = storeRef.current ? storeRef.current.getPageEdges(activePageId) : {};
   const selectedNodesList: CanvasNode[] = [];
+  const selectedEdgesList: CanvasEdge[] = [];
   let selectionBounds: BoundingBox | null = null;
 
   if (selectedIds.size > 0) {
@@ -968,6 +1765,17 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
         maxX = Math.max(maxX, b.maxX);
         maxY = Math.max(maxY, b.maxY);
       }
+      const e = activeEdges[id];
+      if (e) {
+        selectedEdgesList.push(e);
+        const b = getEdgeBoundingBox(e, activeNodes);
+        if (b) {
+          minX = Math.min(minX, b.minX);
+          minY = Math.min(minY, b.minY);
+          maxX = Math.max(maxX, b.maxX);
+          maxY = Math.max(maxY, b.maxY);
+        }
+      }
     }
 
     if (minX !== Infinity) {
@@ -983,86 +1791,145 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
 
   return (
     <div
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       className={`relative w-screen h-screen overflow-hidden select-none font-sans ${
         theme === 'dark' ? 'dark bg-[#0B0E14] text-[#F3F4F6]' : 'bg-[#F7F7F5] text-[#111827]'
       }`}
     >
-      {/* 1. Top Architectural Studio Header (44px full-width docked bar) */}
-      <StudioHeader
-        documentTitle={boardTitle}
-        onChangeDocumentTitle={setBoardTitle}
-        remoteUsers={remoteUsers}
-        isFollowingPresenter={isFollowingPresenter}
-        onToggleFollowPresenter={() => setIsFollowingPresenter((f) => !f)}
-        isPresenter={isPresenter}
-        onTogglePresenter={() => setIsPresenter((p) => !p)}
-        role={role}
-        onOpenShare={() => setShareOpen(true)}
-        onExportCanvas={() => {
-          if (storeRef.current) {
-            const doc = storeRef.current.exportToJSONCanvas(activePageId);
-            exportCanvasFile(doc, boardTitle.toLowerCase().replace(/\s+/g, '-'));
-          }
-        }}
-        onExportPNG={async () => {
-          if (canvasRef.current) {
-            const blob = await exportCanvasToPNG(canvasRef.current, false);
-            downloadFile(blob, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.png`, 'image/png');
-          }
-        }}
-        onExportSVG={() => {
-          if (storeRef.current) {
-            const nodes = storeRef.current.getPageNodes(activePageId);
-            const edges = storeRef.current.getPageEdges(activePageId);
-            const svg = exportPageToSVG(nodes, edges, theme, false);
-            downloadFile(svg, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.svg`, 'image/svg+xml');
-          }
-        }}
-        onImportCanvasFile={async (file) => {
-          if (!storeRef.current) return;
-          try {
-            const doc = await parseCanvasFile(file);
-            storeRef.current.importFromJSONCanvas(activePageId, doc);
-          } catch (err) {
-            alert(`Error parsing .canvas file: ${(err as Error).message}`);
-          }
-        }}
-        onOpenCommandPalette={() => {
-          // Trigger quick search or tool focus
-          setActiveTool('select');
-        }}
-        theme={theme}
-      />
+      {/* 1. Top Architectural Studio Header (Hidden in Presentation Mode) */}
+      {!isPresentationMode && (
+        <StudioHeader
+          documentTitle={boardTitle}
+          onChangeDocumentTitle={setBoardTitle}
+          remoteUsers={remoteUsers}
+          isFollowingPresenter={isFollowingPresenter}
+          onToggleFollowPresenter={() => setIsFollowingPresenter((f) => !f)}
+          isPresenter={isPresenter}
+          onTogglePresenter={() => setIsPresenter((p) => !p)}
+          role={role}
+          onOpenShare={() => setShareOpen(true)}
+          onStartPresentation={handleStartPresentation}
+          onOpenWorkspace={() => setIsWorkspaceOpen(true)}
+          onToggleDocs={() => setIsDocsOpen((d) => !d)}
+          isDocsOpen={isDocsOpen}
+          onToggleCodeDrawer={() => setIsCodeDrawerOpen((c) => !c)}
+          isCodeDrawerOpen={isCodeDrawerOpen}
+          onOpenMcpModal={() => setIsMcpModalOpen(true)}
+          onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
+          onToggleHistory={() => setIsHistoryOpen((h) => !h)}
+          isHistoryOpen={isHistoryOpen}
+          isEncrypted={isEncrypted}
+          onExportCanvas={() => {
+            if (storeRef.current) {
+              const doc = storeRef.current.exportToJSONCanvas(activePageId);
+              exportCanvasFile(doc, boardTitle.toLowerCase().replace(/\s+/g, '-'));
+            }
+          }}
+          onExportPNG={async () => {
+            if (canvasRef.current && storeRef.current) {
+              const rawBlob = await exportCanvasToPNG(canvasRef.current, false);
+              const doc = storeRef.current.exportToJSONCanvas(activePageId);
+              const smartBlob = await embedSceneInPng(rawBlob, doc);
+              downloadFile(smartBlob, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.png`, 'image/png');
+            }
+          }}
+          onExportSVG={() => {
+            if (storeRef.current) {
+              const nodes = storeRef.current.getPageNodes(activePageId);
+              const edges = storeRef.current.getPageEdges(activePageId);
+              const doc = storeRef.current.exportToJSONCanvas(activePageId);
+              const rawSvg = exportPageToSVG(nodes, edges, theme, false);
+              const smartSvg = embedSceneInSvg(rawSvg, doc);
+              downloadFile(smartSvg, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.svg`, 'image/svg+xml');
+            }
+          }}
+          onExportPDF={() => {
+            if (storeRef.current) {
+              const nodes = storeRef.current.getPageNodes(activePageId);
+              const edges = storeRef.current.getPageEdges(activePageId);
+              exportFramesToPdf(nodes, edges, theme, boardTitle.toLowerCase().replace(/\s+/g, '-'));
+            }
+          }}
+          onCustomExport={async (exporter) => {
+            if (storeRef.current) {
+              const nodes = storeRef.current.getPageNodes(activePageId);
+              const edges = storeRef.current.getPageEdges(activePageId);
+              const res = await exporter.export(nodes, edges);
+              downloadFile(
+                res,
+                `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.${exporter.extension}`,
+                exporter.mimeType
+              );
+            }
+          }}
+          onImportCanvasFile={async (file) => {
+            if (!storeRef.current) return;
+            try {
+              const doc = await extractSceneFromFile(file);
+              if (doc) {
+                storeRef.current.importFromJSONCanvas(activePageId, doc);
+              } else {
+                const fallbackDoc = await parseCanvasFile(file);
+                storeRef.current.importFromJSONCanvas(activePageId, fallbackDoc);
+              }
+            } catch (err) {
+              alert(`Error importing file: ${(err as Error).message}`);
+            }
+          }}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          theme={theme}
+        />
+      )}
 
-      {/* 2. Left Docked Tool Strip (48px vertical rail with 1px right border) */}
-      <Toolbar
-        activeTool={activeTool}
-        onSelectTool={setActiveTool}
-        canUndo={storeRef.current?.canUndo() ?? false}
-        canRedo={storeRef.current?.canRedo() ?? false}
-        onUndo={() => storeRef.current?.undo()}
-        onRedo={() => storeRef.current?.redo()}
-        readOnly={isReadOnly}
-        theme={theme}
-      />
+      {/* 2. Left Docked Tool Strip (Hidden in Presentation Mode) */}
+      {!isPresentationMode && (
+        <Toolbar
+          activeTool={activeTool}
+          onSelectTool={setActiveTool}
+          canUndo={storeRef.current?.canUndo() ?? false}
+          canRedo={storeRef.current?.canRedo() ?? false}
+          onUndo={() => storeRef.current?.undo()}
+          onRedo={() => storeRef.current?.redo()}
+          readOnly={isReadOnly}
+          theme={theme}
+          onToggleKits={() => setIsSmartKitsOpen((k) => !k)}
+          isKitsOpen={isSmartKitsOpen}
+        />
+      )}
 
-      {/* 3. Live Viewport Rulers (20px top from left 68px, 20px left from top 64px) */}
-      <RulerOverlay
-        camera={camera}
-        cursorScreenPos={cursorScreenPos}
-        theme={theme}
-      />
+      {/* 3. Live Viewport Rulers (Hidden in Presentation Mode) */}
+      {!isPresentationMode && (
+        <RulerOverlay
+          camera={camera}
+          cursorScreenPos={cursorScreenPos}
+          theme={theme}
+        />
+      )}
 
-      {/* 4. Main Canvas Viewport (docked edge-to-edge between rulers and telemetry footer) */}
-      <div className="absolute top-[64px] left-[68px] right-0 bottom-[30px] overflow-hidden">
+      {/* 4. Main Canvas Viewport (docked edge-to-edge between chrome, or full-bleed in presentation) */}
+      <div
+        className={`absolute overflow-hidden ${
+          isPresentationMode ? 'inset-0' : 'top-[64px] left-[68px] right-0 bottom-[30px]'
+        }`}
+      >
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          onPointerLeave={() => {
+          onPointerCancel={(e) => {
+            activePointersRef.current.delete(e.pointerId);
+            if (e.pointerType === 'pen') hasActivePenRef.current = false;
+            if (activePointersRef.current.size < 2) prevPinchRef.current = null;
+          }}
+          onPointerLeave={(e) => {
+            activePointersRef.current.delete(e.pointerId);
+            if (e.pointerType === 'pen') hasActivePenRef.current = false;
+            if (activePointersRef.current.size < 2) prevPinchRef.current = null;
             setCursorScreenPos(null);
             setCursorWorldPos(null);
+            setDistanceMeasurement(null);
           }}
           onWheel={handleWheel}
           onDoubleClick={handleDoubleClick}
@@ -1101,10 +1968,10 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
       </div>
 
       {/* 5. Contextual Floating Inspector (Rendered 10px above selection top) */}
-      {selectionBounds && selectedNodesList.length > 0 && !isReadOnly && (
+      {selectionBounds && (selectedNodesList.length > 0 || selectedEdgesList.length > 0) && !isReadOnly && !isPresentationMode && (
         <SelectionInspector
           selectedNodes={selectedNodesList}
-          selectedEdges={[]}
+          selectedEdges={selectedEdgesList}
           bounds={selectionBounds}
           camera={camera}
           theme={theme}
@@ -1112,55 +1979,237 @@ export const WhiteboardApp: React.FC<WhiteboardAppProps> = ({
           onChangeStrokeWidth={handleChangeSelectedStrokeWidth}
           onChangeFillStyle={handleChangeSelectedFillStyle}
           onChangeRenderMode={handleChangeSelectedRenderMode}
+          onChangeRoutingMode={handleChangeSelectedRoutingMode}
+          onChangeEndpoint={handleChangeSelectedEndpoint}
           onDelete={handleDeleteSelected}
           onDuplicate={handleDuplicateSelected}
         />
       )}
 
-      {/* 6. Bottom Telemetry & Multi-Page Bar (30px full-width docked footer) */}
-      <BottomTelemetryBar
-        pages={pages}
-        activePageId={activePageId}
-        onSelectPage={(id) => {
-          setActivePageId(id);
-          setSelectedIds(new Set());
-          storeRef.current?.setupUndoManager(id);
-        }}
+      {/* 6. Bottom Telemetry & Multi-Page Bar (Hidden in Presentation Mode) */}
+      {!isPresentationMode && (
+        <BottomTelemetryBar
+          pages={pages}
+          activePageId={activePageId}
+          onSelectPage={(id) => {
+            setActivePageId(id);
+            setSelectedIds(new Set());
+            storeRef.current?.setupUndoManager(id);
+          }}
+          onCreatePage={() => {
+            if (storeRef.current) {
+              const newId = storeRef.current.createPage();
+              setActivePageId(newId);
+            }
+          }}
+          onRenamePage={(id, name) => {
+            storeRef.current?.renamePage(id, name);
+          }}
+          onDeletePage={(id) => {
+            if (storeRef.current) {
+              const nextActive = storeRef.current.deletePage(id);
+              if (nextActive) setActivePageId(nextActive);
+            }
+          }}
+          cursorWorldPos={cursorWorldPos}
+          selectedBounds={selectionBounds}
+          camera={camera}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onResetZoom={handleResetZoom}
+          onZoomToFit={handleZoomToFit}
+          showGrid={showGrid}
+          onToggleGrid={() => setShowGrid((g) => !g)}
+          theme={theme}
+          onToggleTheme={toggleLocalTheme}
+          readOnly={isReadOnly}
+        />
+      )}
+
+      {/* 7. Slide Presentation Mode Stage Overlay */}
+      {isPresentationMode && (
+        <PresentationOverlay
+          frames={getOrderedFrames()}
+          activeSlideIndex={activeSlideIndex}
+          onNextSlide={handleNextSlide}
+          onPrevSlide={handlePrevSlide}
+          onGoToSlide={(idx) => {
+            setActiveSlideIndex(idx);
+            animateCameraToFrame(getOrderedFrames()[idx]);
+          }}
+          onExit={() => setIsPresentationMode(false)}
+          theme={theme}
+        />
+      )}
+
+      {/* 8. Functional ⌘K Command Palette Modal */}
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        theme={theme}
+        onSelectTool={setActiveTool}
+        onSelectRenderMode={setGlobalRenderMode}
+        onToggleGrid={() => setShowGrid((g) => !g)}
+        onToggleTheme={toggleLocalTheme}
+        onZoomToFit={handleZoomToFit}
+        onStartPresentation={handleStartPresentation}
+        onAlign={handleAlign}
+        onDistribute={handleDistribute}
+        onBringToFront={handleBringToFront}
+        onSendToBack={handleSendToBack}
+        onDuplicate={handleDuplicateSelected}
+        onCopy={handleCopy}
+        onPaste={handlePaste}
+        onDelete={handleDeleteSelected}
         onCreatePage={() => {
           if (storeRef.current) {
             const newId = storeRef.current.createPage();
             setActivePageId(newId);
           }
         }}
-        onRenamePage={(id, name) => {
-          storeRef.current?.renamePage(id, name);
-        }}
-        onDeletePage={(id) => {
+        onExportCanvas={() => {
           if (storeRef.current) {
-            const nextActive = storeRef.current.deletePage(id);
-            if (nextActive) setActivePageId(nextActive);
+            const doc = storeRef.current.exportToJSONCanvas(activePageId);
+            exportCanvasFile(doc, boardTitle.toLowerCase().replace(/\s+/g, '-'));
           }
         }}
-        cursorWorldPos={cursorWorldPos}
-        selectedBounds={selectionBounds}
-        camera={camera}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onResetZoom={handleResetZoom}
-        onZoomToFit={handleZoomToFit}
-        showGrid={showGrid}
-        onToggleGrid={() => setShowGrid((g) => !g)}
-        theme={theme}
-        onToggleTheme={toggleLocalTheme}
-        readOnly={isReadOnly}
+        onExportPNG={async () => {
+          if (canvasRef.current) {
+            const blob = await exportCanvasToPNG(canvasRef.current, false);
+            downloadFile(blob, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.png`, 'image/png');
+          }
+        }}
+        onExportSVG={() => {
+          if (storeRef.current) {
+            const nodes = storeRef.current.getPageNodes(activePageId);
+            const edges = storeRef.current.getPageEdges(activePageId);
+            const svg = exportPageToSVG(nodes, edges, theme, false);
+            downloadFile(svg, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.svg`, 'image/svg+xml');
+          }
+        }}
+        onExportPDF={() => {
+          if (storeRef.current) {
+            const nodes = storeRef.current.getPageNodes(activePageId);
+            const edges = storeRef.current.getPageEdges(activePageId);
+            exportFramesToPdf(nodes, edges, theme, boardTitle.toLowerCase().replace(/\s+/g, '-'));
+          }
+        }}
+        hasSelection={selectedIds.size > 0}
       />
 
-      {/* 7. Share Modal Dialog */}
+      {/* 9. Share Modal Dialog */}
       <ShareModal
         isOpen={shareOpen}
         onClose={() => setShareOpen(false)}
-        roomId={roomId}
+        roomId={currentRoomId}
+        onExportCanvas={() => {
+          if (storeRef.current) {
+            const doc = storeRef.current.exportToJSONCanvas(activePageId);
+            exportCanvasFile(doc, boardTitle.toLowerCase().replace(/\s+/g, '-'));
+          }
+        }}
+        onExportPNG={async () => {
+          if (canvasRef.current && storeRef.current) {
+            const rawBlob = await exportCanvasToPNG(canvasRef.current, false);
+            const doc = storeRef.current.exportToJSONCanvas(activePageId);
+            const smartBlob = await embedSceneInPng(rawBlob, doc);
+            downloadFile(smartBlob, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.png`, 'image/png');
+          }
+        }}
+        onExportSVG={() => {
+          if (storeRef.current) {
+            const nodes = storeRef.current.getPageNodes(activePageId);
+            const edges = storeRef.current.getPageEdges(activePageId);
+            const doc = storeRef.current.exportToJSONCanvas(activePageId);
+            const rawSvg = exportPageToSVG(nodes, edges, theme, false);
+            const smartSvg = embedSceneInSvg(rawSvg, doc);
+            downloadFile(smartSvg, `${boardTitle.toLowerCase().replace(/\s+/g, '-')}.svg`, 'image/svg+xml');
+          }
+        }}
       />
+
+      {/* 10. Doc Spec Split-Pane */}
+      {storeRef.current && (
+        <DocSplitPane
+          isOpen={isDocsOpen}
+          onClose={() => setIsDocsOpen(false)}
+          store={storeRef.current}
+          activePageId={activePageId}
+          selectedNodes={Array.from(selectedIds)}
+          nodes={activeNodes}
+          theme={theme}
+          onNavigateToNode={handleNavigateToNode}
+        />
+      )}
+
+      {/* 11. Diagram-as-Code Drawer */}
+      {storeRef.current && (
+        <CodeDrawer
+          isOpen={isCodeDrawerOpen}
+          onClose={() => setIsCodeDrawerOpen(false)}
+          store={storeRef.current}
+          activePageId={activePageId}
+          nodes={activeNodes}
+          edges={activeEdges}
+          theme={theme}
+        />
+      )}
+
+      {/* 12. Domain Smart Kits Drawer */}
+      {storeRef.current && (
+        <SmartKitsDrawer
+          isOpen={isSmartKitsOpen}
+          onClose={() => setIsSmartKitsOpen(false)}
+          store={storeRef.current}
+          activePageId={activePageId}
+          camera={camera}
+          theme={theme}
+          onSelectNode={(nodeId) => setSelectedIds(new Set([nodeId]))}
+        />
+      )}
+
+      {/* 13. BYOK AI Assistant Modal */}
+      {storeRef.current && (
+        <AiAssistantModal
+          isOpen={isAiAssistantOpen}
+          onClose={() => setIsAiAssistantOpen(false)}
+          store={storeRef.current}
+          activePageId={activePageId}
+          nodes={activeNodes}
+          edges={activeEdges}
+          selectedNodes={Array.from(selectedIds)}
+          theme={theme}
+        />
+      )}
+
+      {/* 14. Connect AI Agent via MCP Modal */}
+      <McpModal
+        isOpen={isMcpModalOpen}
+        onClose={() => setIsMcpModalOpen(false)}
+        roomId={currentRoomId}
+        theme={theme}
+      />
+
+      {/* 15. Multi-Board Workspace Modal */}
+      <WorkspaceModal
+        isOpen={isWorkspaceOpen}
+        onClose={() => setIsWorkspaceOpen(false)}
+        activeRoomId={currentRoomId}
+        onSelectBoard={handleSwitchRoom}
+        theme={theme}
+      />
+
+      {/* 16. Non-Destructive Version History Drawer */}
+      {storeRef.current && (
+        <HistoryDrawer
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          store={storeRef.current}
+          roomId={currentRoomId}
+          theme={theme}
+          onSwitchRoom={handleSwitchRoom}
+        />
+      )}
     </div>
   );
 };

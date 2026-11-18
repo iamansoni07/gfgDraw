@@ -1,6 +1,7 @@
 import { CanvasNode, CanvasEdge, BoundingBox, JSONCanvasDoc } from '../types/canvas';
 import { getNodeBoundingBox } from './spatialIndex';
 import { resolveColor, getAnchorPoint } from './renderer';
+import { sanitizeSvgText } from './sanitize';
 
 /**
  * Triggers a client-side file download.
@@ -139,7 +140,7 @@ export function exportPageToSVG(
     if (edge.label) {
       const midX = (fromPt.x + toPt.x) / 2;
       const midY = (fromPt.y + toPt.y) / 2;
-      svgElements += `<text x="${midX}" y="${midY}" fill="${color}" font-size="12" text-anchor="middle" dominant-baseline="middle">${edge.label}</text>\n`;
+      svgElements += `<text x="${midX}" y="${midY}" fill="${color}" font-size="12" text-anchor="middle" dominant-baseline="middle">${sanitizeSvgText(edge.label)}</text>\n`;
     }
   }
 
@@ -172,7 +173,7 @@ export function exportPageToSVG(
     if (node.text) {
       const cx = node.x + node.width / 2;
       const cy = node.y + node.height / 2;
-      svgElements += `<text x="${cx}" y="${cy}" fill="${color}" font-size="14" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif">${node.text}</text>\n`;
+      svgElements += `<text x="${cx}" y="${cy}" fill="${color}" font-size="14" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif">${sanitizeSvgText(node.text)}</text>\n`;
     }
   }
 

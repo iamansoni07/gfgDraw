@@ -1,0 +1,20 @@
+services:
+  gfgdraw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gfg-draw-studio
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_PATH=/data/gfgdraw.db
+    volumes:
+      - gfgdraw_data:/data
+
+volumes:
+  gfgdraw_data:
+    driver: local
+

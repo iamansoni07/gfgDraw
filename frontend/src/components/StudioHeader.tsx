@@ -12,8 +12,17 @@ import {
   Layers,
   Edit2,
   Check,
+  Play,
+  FileText,
+  Code,
+  Sparkles,
+  Bot,
+  ShieldCheck,
+  History,
+  FolderKanban,
 } from 'lucide-react';
-import { UserAwareness } from '../types/canvas';
+import { UserAwareness, CanvasNode, CanvasEdge } from '../types/canvas';
+import { PluginRegistry, CustomExporter } from '../sdk/pluginApi';
 
 interface StudioHeaderProps {
   documentTitle: string;
@@ -28,8 +37,21 @@ interface StudioHeaderProps {
   onExportCanvas: () => void;
   onExportPNG: () => void;
   onExportSVG: () => void;
+  onExportPDF?: () => void;
+  onCustomExport?: (exporter: CustomExporter) => void;
   onImportCanvasFile: (file: File) => void;
   onOpenCommandPalette?: () => void;
+  onStartPresentation?: () => void;
+  onToggleDocs?: () => void;
+  isDocsOpen?: boolean;
+  onToggleCodeDrawer?: () => void;
+  isCodeDrawerOpen?: boolean;
+  onOpenMcpModal?: () => void;
+  onOpenAiAssistant?: () => void;
+  onOpenWorkspace?: () => void;
+  onToggleHistory?: () => void;
+  isHistoryOpen?: boolean;
+  isEncrypted?: boolean;
   theme: 'light' | 'dark';
 }
 
@@ -46,8 +68,21 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
   onExportCanvas,
   onExportPNG,
   onExportSVG,
+  onExportPDF,
+  onCustomExport,
   onImportCanvasFile,
   onOpenCommandPalette,
+  onStartPresentation,
+  onToggleDocs,
+  isDocsOpen,
+  onToggleCodeDrawer,
+  isCodeDrawerOpen,
+  onOpenMcpModal,
+  onOpenAiAssistant,
+  onOpenWorkspace,
+  onToggleHistory,
+  isHistoryOpen,
+  isEncrypted,
   theme,
 }) => {
   const [editingTitle, setEditingTitle] = useState(false);
@@ -73,14 +108,19 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
     >
       {/* LEFT: Custom Geometric Emblem + Title + Command Palette Trigger */}
       <div className="flex items-center gap-3">
-        {/* Custom Geometric GFG Emblem */}
-        <div className="flex items-center gap-2">
+        {/* Custom Geometric GFG Emblem + Workspace Launcher */}
+        <button
+          type="button"
+          onClick={onOpenWorkspace}
+          title="Open Workspace Blueprints & Folders"
+          className="flex items-center gap-2 p-1 -ml-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800/80 transition-colors cursor-pointer group"
+        >
           <svg
             width="24"
             height="24"
             viewBox="0 0 28 28"
             fill="none"
-            className="flex-shrink-0"
+            className="flex-shrink-0 group-hover:scale-105 transition-transform"
             aria-label="GFG Draw Architectural Studio"
           >
             {/* Outer Precision Hexagonal Caliper Frame */}
@@ -96,15 +136,15 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             {/* Center Core Node */}
             <circle cx="14" cy="15" r="3" fill={theme === 'dark' ? '#10B981' : '#059669'} />
           </svg>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-xs font-black tracking-wider uppercase text-zinc-900 dark:text-zinc-100">
+          <div className="flex items-baseline gap-1.5 text-left">
+            <span className="text-xs font-black tracking-wider uppercase text-zinc-900 dark:text-zinc-100 group-hover:text-emerald-500 transition-colors">
               GFG Draw
             </span>
             <span className="hidden sm:inline-block text-[10px] font-mono font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">
               Drafting Studio
             </span>
           </div>
-        </div>
+        </button>
 
         <div className="w-[1px] h-4 bg-zinc-200 dark:bg-zinc-800" />
 
@@ -235,6 +275,17 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
           </button>
         )}
 
+        {/* Zero-Knowledge E2EE Badge */}
+        {isEncrypted && (
+          <div
+            title="Zero-Knowledge E2EE Active: AES-GCM 256-bit encryption key stored only in URL fragment (#key=...)"
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold tracking-tight bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="hidden sm:inline">E2EE</span>
+          </div>
+        )}
+
         {/* Editor / Read-Only Role Badge */}
         <div
           className={`hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono font-bold tracking-tight border ${
@@ -300,6 +351,31 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
                 <span>Export as SVG</span>
               </button>
 
+              {onExportPDF && (
+                <button
+                  type="button"
+                  onClick={onExportPDF}
+                  className="w-full text-left px-2.5 py-1.5 rounded text-zinc-700 dark:text-zinc-200 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400 flex items-center gap-2 transition-colors"
+                >
+                  <FileText className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Export Frames as PDF</span>
+                </button>
+              )}
+
+              {/* Plugin Custom Exporters */}
+              {onCustomExport &&
+                PluginRegistry.getAllExporters().map((exp) => (
+                  <button
+                    key={exp.id}
+                    type="button"
+                    onClick={() => onCustomExport(exp)}
+                    className="w-full text-left px-2.5 py-1.5 rounded text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 transition-colors"
+                  >
+                    <FileCode className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>{exp.label}</span>
+                  </button>
+                ))}
+
               <div className="h-[1px] bg-zinc-200 dark:bg-zinc-800 my-1" />
 
               <label className="w-full text-left px-2.5 py-1.5 rounded text-zinc-700 dark:text-zinc-200 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400 flex items-center gap-2 cursor-pointer transition-colors">
@@ -318,6 +394,98 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             </div>
           )}
         </div>
+
+        {/* Docs Split-Pane Toggle */}
+        {onToggleDocs && (
+          <button
+            type="button"
+            onClick={onToggleDocs}
+            title={isDocsOpen ? 'Close Document Spec Pane' : 'Open Document Spec Pane'}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium transition-colors ${
+              isDocsOpen
+                ? 'bg-emerald-600 text-white shadow-2xs'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Docs</span>
+          </button>
+        )}
+
+        {/* Version History Timeline Toggle */}
+        {onToggleHistory && (
+          <button
+            type="button"
+            onClick={onToggleHistory}
+            title={isHistoryOpen ? 'Close Version Timeline' : 'Open Version Timeline'}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium transition-colors ${
+              isHistoryOpen
+                ? 'bg-emerald-600 text-white shadow-2xs'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">History</span>
+          </button>
+        )}
+
+        {/* Diagram-as-Code Drawer Toggle */}
+        {onToggleCodeDrawer && (
+          <button
+            type="button"
+            onClick={onToggleCodeDrawer}
+            title={isCodeDrawerOpen ? 'Close Code Drawer' : 'Open Diagram-as-Code (Mermaid)'}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium transition-colors ${
+              isCodeDrawerOpen
+                ? 'bg-emerald-600 text-white shadow-2xs'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800'
+            }`}
+          >
+            <Code className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Mermaid</span>
+          </button>
+        )}
+
+        {/* Connect AI Agent via MCP Modal */}
+        {onOpenMcpModal && (
+          <button
+            type="button"
+            onClick={onOpenMcpModal}
+            title="Connect AI Agent via Model Context Protocol (MCP)"
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium text-zinc-600 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <Bot className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="hidden lg:inline">MCP</span>
+          </button>
+        )}
+
+        {/* BYOK AI Assistant Modal */}
+        {onOpenAiAssistant && (
+          <button
+            type="button"
+            onClick={onOpenAiAssistant}
+            title="AI Assistant: Prompt-to-Architecture, ERD, Auto-Tidy"
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-mono font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="hidden lg:inline">AI</span>
+          </button>
+        )}
+
+        <div className="w-[1px] h-4 bg-zinc-200 dark:bg-zinc-800" />
+
+        {/* Present Slide Mode Trigger */}
+        {onStartPresentation && (
+          <button
+            type="button"
+            onClick={onStartPresentation}
+            title="Start Slide Presentation Mode (⌘+Enter)"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-xs font-mono font-medium transition-colors"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span className="hidden sm:inline">Present</span>
+          </button>
+        )}
 
         {/* Share Modal Trigger */}
         <button
